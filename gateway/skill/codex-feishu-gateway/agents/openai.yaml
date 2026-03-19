@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Feishu Gateway"
+  short_description: "接入飞书并迁移到 Windows 的本地网关流程。"
+  default_prompt: "Use this skill when Codex needs to set up, migrate, or troubleshoot the local Feishu gateway for Codex CLI/Desktop, especially on Windows."

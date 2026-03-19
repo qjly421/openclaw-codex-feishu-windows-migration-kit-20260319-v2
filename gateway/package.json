@@ -1,0 +1,17 @@
+{
+  "name": "codex-feishu-gateway-migration-kit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sanitized migration kit for connecting Codex to Feishu over long connection.",
+  "scripts": {
+    "auth-test": "node codex_feishu_gateway.mjs auth-test --config ./feishu_gateway.json",
+    "watch": "node codex_feishu_gateway.mjs watch --config ./feishu_gateway.json",
+    "usage:group": "node report_feishu_group_usage.mjs",
+    "usage:ledger": "node report_feishu_usage_ledger.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.56.0"
+  }
+}

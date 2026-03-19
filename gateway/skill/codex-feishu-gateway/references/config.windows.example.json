@@ -1,0 +1,21 @@
+{
+  "appId": "cli_your_feishu_app_id",
+  "appSecret": "your_feishu_app_secret",
+  "botName": "Codex Bot",
+  "domain": "feishu",
+  "workspace": "D:\\codex-workspace",
+  "codexBin": "codex",
+  "stateFile": "C:\\Users\\YourName\\.codex-feishu-gateway\\feishu_gateway_state.json",
+  "dmPolicy": "open",
+  "groupPolicy": "open",
+  "allowFrom": ["*"],
+  "groupAllowFrom": ["*"],
+  "requireMentionInGroups": false,
+  "groupSessionScope": "group_sender",
+  "typingIndicator": true,
+  "typingEmoji": "Typing",
+  "replyChunkLimit": 1800,
+  "codexTimeoutMs": 600000,
+  "codexArgs": [],
+  "mediaRoot": "C:\\Users\\YourName\\.codex-feishu-gateway\\feishu_media"
+}

@@ -1,0 +1,62 @@
+{
+  "appId": "cli_<FEISHU_APP_ID>",
+  "appSecret": "<FEISHU_APP_SECRET>",
+  "botName": "Codex Bot",
+  "domain": "feishu",
+  "workspace": "<WORKSPACE_ROOT>",
+  "codexBin": "<CODEX_BIN>",
+  "codexSessionsRoot": "<CODEX_HOME>\\sessions",
+  "stateFile": "<RUNTIME_ROOT>\\feishu_gateway_state.json",
+  "usageLedgerEnabled": true,
+  "usageLedgerFile": "<RUNTIME_ROOT>\\feishu_usage_ledger.jsonl",
+  "dmPolicy": "open",
+  "groupPolicy": "open",
+  "allowFrom": [
+    "*"
+  ],
+  "groupAllowFrom": [
+    "*"
+  ],
+  "requireMentionInGroups": false,
+  "groupSessionScope": "group_sender",
+  "groupAssistantMode": "hybrid",
+  "groupPublicMemoryLimit": 24,
+  "groupHighlightLimit": 12,
+  "typingIndicator": true,
+  "typingEmoji": "Typing",
+  "progressUpdates": true,
+  "progressInitialDelayMs": 8000,
+  "progressUpdateIntervalMs": 15000,
+  "progressMaxMessages": 6,
+  "planFirstForTasks": true,
+  "autoPlanInGroups": false,
+  "planQuestionLimit": 3,
+  "planCardsEnabled": true,
+  "cardCallbackEnabled": false,
+  "cardLongConnectionEnabled": true,
+  "cardCallbackHost": "0.0.0.0",
+  "cardCallbackPort": 16688,
+  "cardCallbackPath": "/webhook/card",
+  "cardCallbackAutoChallenge": true,
+  "cardCallbackPublicBaseUrl": "",
+  "cardCallbackTunnelEnabled": false,
+  "cardCallbackTunnelBin": "",
+  "cardCallbackTunnelArgs": [],
+  "verificationToken": "",
+  "encryptKey": "",
+  "cardActionRequireSameUser": true,
+  "simpleTaskMaxChars": 90,
+  "simpleTaskMaxLines": 2,
+  "startupNotifyChatIds": [
+    "<FEISHU_CHAT_ID>"
+  ],
+  "startupNotifyMessage": "",
+  "startupNotifyDeduplicatePerBoot": true,
+  "replyChunkLimit": 1800,
+  "codexTimeoutMs": 3600000,
+  "codexFirstEventTimeoutMs": 60000,
+  "codexArgs": [
+    "dangerously-bypass-approvals-and-sandbox"
+  ],
+  "mediaRoot": "<MEDIA_ROOT>"
+}
