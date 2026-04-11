@@ -27,6 +27,8 @@
 
 - `skills/`
   - `codex-feishu-gateway`
+  - `feishu-doc-writer`
+  - `github-repo-sync`
   - `long-task-orchestrator`
 
 - `docs/`
@@ -120,6 +122,8 @@
 推荐先装：
 
 - `skills/codex-feishu-gateway`
+- `skills/feishu-doc-writer`
+- `skills/github-repo-sync`
 - `skills/long-task-orchestrator`
 
 ### 3. 接 private 仓库

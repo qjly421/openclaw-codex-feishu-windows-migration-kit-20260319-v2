@@ -57,6 +57,8 @@ Copy the directories under `skills/` into your local Codex skills directory:
 Recommended starting skills:
 
 - `skills/codex-feishu-gateway`
+- `skills/feishu-doc-writer`
+- `skills/github-repo-sync`
 - `skills/long-task-orchestrator`
 
 ## Repository Positioning

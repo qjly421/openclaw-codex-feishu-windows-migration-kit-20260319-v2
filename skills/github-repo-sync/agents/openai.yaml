@@ -1,0 +1,7 @@
+interface:
+  display_name: "GitHub Repo Sync"
+  short_description: "GitHub auth, SSH transport, and multi-device repo sync without embedding live secrets."
+  default_prompt: "Use $github-repo-sync to inspect GitHub auth state, SSH key setup, repo remotes, and prepare safe sync across machines."
+
+policy:
+  allow_implicit_invocation: true

@@ -5,6 +5,8 @@
 ## 当前纳入的 public skills
 
 - `codex-feishu-gateway`
+- `feishu-doc-writer`
+- `github-repo-sync`
 - `long-task-orchestrator`
 
 ## 安装方式
