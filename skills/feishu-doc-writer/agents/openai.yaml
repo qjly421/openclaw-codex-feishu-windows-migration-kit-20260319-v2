@@ -1,0 +1,7 @@
+interface:
+  display_name: "Feishu Doc Writer"
+  short_description: "Portable Feishu wiki/docx writer without embedded local secrets."
+  default_prompt: "Use $feishu-doc-writer to create or update a Feishu wiki/docx page with portable credentials and validate the written content."
+
+policy:
+  allow_implicit_invocation: true
