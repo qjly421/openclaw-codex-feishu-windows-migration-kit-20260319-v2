@@ -1,4 +1,4 @@
-# OpenClaw Codex Feishu Framework
+# Codex Feishu Framework
 
 这个仓库现在不再只作为一次性的 Windows 迁移包使用。
 
@@ -9,9 +9,9 @@
 - Windows / macOS 多设备部署和迁移入口
 - 后续 private 科研任务仓库的公共底座
 
-当前仓库名保留了最初的迁移历史，后续如果要统一命名，建议改成：
+当前仓库 slug 还保留了最初的迁移历史，但项目展示名现在统一为：
 
-- public 仓库：`openclaw-codex-feishu-framework`
+- `Codex Feishu Framework`
 - private 配套仓库：`openclaw-research-private`
 
 ## 现在包含什么
