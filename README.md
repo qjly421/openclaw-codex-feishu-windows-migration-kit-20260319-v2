@@ -1,4 +1,4 @@
-# OpenClaw Codex Feishu Framework
+# Codex Feishu Framework
 
 This repository is the public framework layer for running a local Feishu-to-Codex gateway, sharing reusable Codex skills, and keeping multi-device deployment patterns in one place.
 
@@ -82,4 +82,4 @@ Keep private research code, sensitive configs, and task-specific internal workfl
 
 ## Naming Note
 
-The repository slug still reflects its migration-kit history, but the project should now be treated as **OpenClaw Codex Feishu Framework**.
+The repository slug still reflects its migration-kit history, but the project should now be treated as **Codex Feishu Framework**.
