@@ -45,8 +45,15 @@
   "startupNotifyChatIds": ["oc_your_group_chat_id"],
   "startupNotifyMessage": "Codex Bot is online and ready.",
   "startupNotifyDeduplicatePerBoot": true,
+  "startupMorningBriefEnabled": false,
+  "startupMorningBriefChatIds": [],
+  "startupMorningBriefMaxItems": 4,
+  "startupMorningBriefMaxAgeDays": 5,
+  "startupMorningBriefDeduplicateDaily": true,
+  "startupMorningBriefTimeZone": "Asia/Shanghai",
   "replyChunkLimit": 1800,
-  "codexTimeoutMs": 600000,
+  "codexTimeoutMs": 3600000,
+  "codexFirstEventTimeoutMs": 180000,
   "codexArgs": [],
   "mediaRoot": "C:\\Users\\YourName\\.codex-feishu-gateway\\feishu_media"
 }

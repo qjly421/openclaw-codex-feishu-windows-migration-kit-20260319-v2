@@ -5,7 +5,8 @@ param(
   [int]$WaitForInternetSeconds = 0,
   [int]$InternetCheckIntervalSeconds = 10,
   [string]$InternetProbeUrlsCsv = "https://open.feishu.cn",
-  [string]$WifiPortalLoginScript = ""
+  [string]$WifiPortalLoginScript = "",
+  [string]$UserProfilePath = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +42,127 @@ $ProxyEnvironmentVariableNames = @(
   'all_proxy',
   'no_proxy'
 )
+
+function Normalize-DirectoryPath {
+  param([string]$Path)
+
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return ''
+  }
+
+  try {
+    return [System.IO.Path]::GetFullPath($Path.Trim())
+  } catch {
+    return ''
+  }
+}
+
+function Get-SystemProfilePath {
+  Normalize-DirectoryPath -Path (Join-Path $env:SystemRoot 'System32\config\systemprofile')
+}
+
+function Resolve-TargetUserProfilePath {
+  param(
+    [string]$RequestedPath,
+    [string]$ConfigFilePath,
+    [string]$GatewayRootPath
+  )
+
+  $candidates = New-Object System.Collections.Generic.List[string]
+  if ($RequestedPath) {
+    $candidates.Add($RequestedPath)
+  }
+
+  $normalizedConfigPath = Normalize-DirectoryPath -Path $ConfigFilePath
+  if ($normalizedConfigPath) {
+    $configParent = Split-Path -Parent $normalizedConfigPath
+    if ((Split-Path -Leaf $configParent) -ieq '.codex-feishu-gateway') {
+      $candidates.Add((Split-Path -Parent $configParent))
+    }
+  }
+
+  $normalizedGatewayRoot = Normalize-DirectoryPath -Path $GatewayRootPath
+  if ($normalizedGatewayRoot) {
+    $gatewayParent = Split-Path -Parent $normalizedGatewayRoot
+    if ($gatewayParent -match '^[A-Za-z]:\\Users\\[^\\]+$') {
+      $candidates.Add($gatewayParent)
+    }
+  }
+
+  if ($env:USERPROFILE) {
+    $candidates.Add($env:USERPROFILE)
+  }
+
+  $systemProfilePath = Get-SystemProfilePath
+  $fallback = ''
+
+  foreach ($candidate in $candidates) {
+    $normalizedCandidate = Normalize-DirectoryPath -Path $candidate
+    if (-not $normalizedCandidate -or -not (Test-Path $normalizedCandidate)) {
+      continue
+    }
+
+    if ($systemProfilePath -and $normalizedCandidate.Equals($systemProfilePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+      if (-not $fallback) {
+        $fallback = $normalizedCandidate
+      }
+      continue
+    }
+
+    return (Resolve-Path $normalizedCandidate).Path
+  }
+
+  return $fallback
+}
+
+function Set-UserScopedCodexEnvironment {
+  param([string]$ProfilePath)
+
+  $resolvedProfilePath = Normalize-DirectoryPath -Path $ProfilePath
+  if (-not $resolvedProfilePath) {
+    return $null
+  }
+
+  if (-not (Test-Path $resolvedProfilePath)) {
+    throw "Target user profile not found: $resolvedProfilePath"
+  }
+
+  $resolvedProfilePath = (Resolve-Path $resolvedProfilePath).Path
+  $appDataPath = Join-Path $resolvedProfilePath 'AppData\Roaming'
+  $localAppDataPath = Join-Path $resolvedProfilePath 'AppData\Local'
+  $codexHomePath = Join-Path $resolvedProfilePath '.codex'
+
+  foreach ($directoryPath in @($appDataPath, $localAppDataPath, $codexHomePath)) {
+    if (-not (Test-Path $directoryPath)) {
+      New-Item -ItemType Directory -Path $directoryPath -Force | Out-Null
+    }
+  }
+
+  $homeDrive = [System.IO.Path]::GetPathRoot($resolvedProfilePath).TrimEnd('\')
+  $homePath = if ($resolvedProfilePath.Length -gt $homeDrive.Length) {
+    $resolvedProfilePath.Substring($homeDrive.Length)
+  } else {
+    '\'
+  }
+
+  $env:USERPROFILE = $resolvedProfilePath
+  $env:HOME = $resolvedProfilePath
+  $env:HOMEDRIVE = $homeDrive
+  $env:HOMEPATH = $homePath
+  $env:USERNAME = Split-Path -Leaf $resolvedProfilePath
+  $env:APPDATA = $appDataPath
+  $env:LOCALAPPDATA = $localAppDataPath
+  $env:CODEX_HOME = $codexHomePath
+  $env:FEISHU_GATEWAY_TARGET_PROFILE = $resolvedProfilePath
+  $env:FEISHU_GATEWAY_CONFIG = $ConfigPath
+
+  [PSCustomObject]@{
+    ProfilePath = $resolvedProfilePath
+    AppData = $appDataPath
+    LocalAppData = $localAppDataPath
+    CodexHome = $codexHomePath
+  }
+}
 
 function Write-LauncherLogLine {
   param(
@@ -87,6 +209,15 @@ function Resolve-NodePath {
   } catch {
     throw "Node.js executable not found. Set -NodePath or NODE_BIN."
   }
+}
+
+$ResolvedUserProfilePath = Resolve-TargetUserProfilePath `
+  -RequestedPath $UserProfilePath `
+  -ConfigFilePath $ConfigPath `
+  -GatewayRootPath $GatewayRoot
+$ScopedEnvironment = $null
+if ($ResolvedUserProfilePath) {
+  $ScopedEnvironment = Set-UserScopedCodexEnvironment -ProfilePath $ResolvedUserProfilePath
 }
 
 function Clear-ProxyEnvironmentVariables {
@@ -595,6 +726,7 @@ function Wait-ForInternetIfNeeded {
 }
 
 $NodePath = Resolve-NodePath -RequestedPath $NodePath
+$env:NODE_BIN = $NodePath
 $nodeArgs = @(
   $GatewayScript,
   'watch',
@@ -603,6 +735,9 @@ $nodeArgs = @(
 )
 
 $nodeSummary = $NodePath
+if ($ScopedEnvironment) {
+  Write-LauncherLogLine -Message ("launch context profile={0} codex_home={1} appdata={2} localappdata={3}" -f $ScopedEnvironment.ProfilePath, $ScopedEnvironment.CodexHome, $ScopedEnvironment.AppData, $ScopedEnvironment.LocalAppData)
+}
 Write-LauncherLogLine -Message "launch requested gateway_root=$GatewayRoot config=$ConfigPath node=$nodeSummary"
 
 $clearedProxyVars = @(Clear-ProxyEnvironmentVariables)
@@ -633,6 +768,14 @@ Wait-ForInternetIfNeeded `
   -GatewayRootPath $GatewayRoot `
   -PortalLoginScriptPath $WifiPortalLoginScript
 
+$existingGatewayProcessIds = @(Find-GatewayWatchProcessIds -GatewayScriptPath $GatewayScript -ConfigFilePath $ConfigPath)
+if ($existingGatewayProcessIds.Count -gt 0) {
+  $existingSummary = ($existingGatewayProcessIds -join ', ')
+  Write-LauncherLogLine -Message "gateway already running with pid=$existingSummary after internet wait; skipping duplicate launch"
+  Write-Host "Feishu gateway already running (pid=$existingSummary)."
+  exit 0
+}
+
 try {
   Remove-Item -Path $SupervisorPidFile -Force -ErrorAction SilentlyContinue
   $proc = Start-Process -FilePath $NodePath `
@@ -653,6 +796,10 @@ try {
       nodePath = $NodePath
       startedAt = (Get-Date).ToString('o')
       launchMode = 'direct_node_launch'
+      targetUserProfile = if ($ScopedEnvironment) { $ScopedEnvironment.ProfilePath } else { '' }
+      codexHome = if ($ScopedEnvironment) { $ScopedEnvironment.CodexHome } else { '' }
+      appData = if ($ScopedEnvironment) { $ScopedEnvironment.AppData } else { '' }
+      localAppData = if ($ScopedEnvironment) { $ScopedEnvironment.LocalAppData } else { '' }
     } | ConvertTo-Json -Depth 5)
   Write-LauncherLogLine -Message "launcher started node pid=$($proc.Id)"
 } catch {

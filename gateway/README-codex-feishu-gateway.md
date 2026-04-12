@@ -7,9 +7,13 @@ This migration kit connects a Feishu bot to local Codex sessions through Feishu 
 - `codex_feishu_gateway.mjs`: Feishu long-connection gateway
 - `feishu_gateway.example.json`: sanitized config template
 - `run_codex_feishu_gateway.sh`: foreground macOS/Linux runner
+- `bootstrap_codex_feishu_macos.sh`: macOS bootstrap for dependencies, config template, and public skills
 - `install_codex_feishu_launchagent.sh`: macOS `launchd` installer
+- `update_codex_feishu_macos.sh`: macOS update flow for repo pull, dependency refresh, and skill sync
+- `sync_public_skills.sh`: copy public skills into the local Codex skill directory
 - `run_codex_feishu_gateway.cmd`: foreground Windows runner
 - `install_codex_feishu_task.ps1`: Windows Task Scheduler installer
+- `README-codex-feishu-macos.md`: macOS deployment guide
 - `README-codex-feishu-windows.md`: Windows migration guide
 - `skill/codex-feishu-gateway/`: reusable skill version of this workflow
 
@@ -76,7 +80,7 @@ node .\codex_feishu_gateway.mjs auth-test --config C:\path\to\feishu_gateway.jso
 macOS:
 
 ```bash
-./install_codex_feishu_launchagent.sh
+bash ./bootstrap_codex_feishu_macos.sh
 ```
 
 Windows:
@@ -120,5 +124,6 @@ If Codex should send a local file or image back through Feishu, it must append o
 - `startupNotifyChatIds` can send a boot-ready message to one or more Feishu chats after the long connection becomes ready.
 - `startupNotifyDeduplicatePerBoot = true` prevents duplicate "ready" messages during reconnect loops in the same Windows boot.
 - Prefer foreground validation before enabling startup automation.
+- On macOS, prefer the bootstrap and update scripts so the `launchd` agent stays attached to the repo checkout and the synced public skills.
 - This kit is a standalone local gateway. It does not modify the Codex desktop app bundle.
 - The Feishu Node SDK documents that long connection currently supports event subscriptions only, not callback subscriptions, so interactive cards require the extra HTTP callback path described above.

@@ -7,6 +7,11 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  buildTimeSeriesMorningBrief,
+  dateKeyInTimeZone,
+  DEFAULT_TIME_SERIES_MORNING_BRIEF_TIME_ZONE,
+} from './timeseries_morning_brief.mjs';
 
 async function importLarkSdkCandidate(candidate) {
   if (!candidate) {
@@ -51,8 +56,8 @@ const DEFAULT_CODEX_SESSIONS_ROOT = path.join(HOME, '.codex', 'sessions');
 const DEFAULT_CODEX_BIN = process.platform === 'darwin' ? '/Applications/Codex.app/Contents/Resources/codex' : 'codex';
 const DEFAULT_WORKSPACE = process.cwd();
 const DEFAULT_REPLY_CHUNK_LIMIT = 1800;
-const DEFAULT_CODEX_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_MS = 60 * 1000;
+const DEFAULT_CODEX_TIMEOUT_MS = 60 * 60 * 1000;
+const DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_MS = 3 * 60 * 1000;
 const DEFAULT_GROUP_SESSION_SCOPE = 'group';
 const DEFAULT_TYPING_EMOJI = 'Typing';
 const DEFAULT_GROUP_ASSISTANT_MODE = 'hybrid';
@@ -412,6 +417,44 @@ function describeError(error) {
     return error.stack || error.message;
   }
   return String(error);
+}
+
+function isRecoverableCodexExitErrorMessage(message) {
+  const normalized = oneLine(message).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return normalized.includes('timeout waiting for child process to exit');
+}
+
+function isRecoverableCodexResumeFailureMessage(message) {
+  const normalized = oneLine(message).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return normalized.includes('codex resume emitted no json events within');
+}
+
+function shouldTreatNonZeroCodexExitAsRecoveredReply({ exitCode, reply, errorText }) {
+  if (Number(exitCode) === 0) {
+    return false;
+  }
+  if (!String(reply || '').trim()) {
+    return false;
+  }
+  return isRecoverableCodexExitErrorMessage(errorText);
+}
+
+function shouldAutoResetCodexThreadAfterFailure(error, threadId = '') {
+  if (!String(threadId || '').trim()) {
+    return false;
+  }
+  const message = error instanceof Error ? error.message : String(error || '');
+  return isRecoverableCodexExitErrorMessage(message) || isRecoverableCodexResumeFailureMessage(message);
+}
+
+function buildCodexSessionResetNotice() {
+  return 'I detected that the previous Codex thread became unhealthy. I kept this reply and reset the thread for the next message. Re-send any key context if you still need it.';
 }
 
 function oneLine(text) {
@@ -952,6 +995,12 @@ function withDefaults(config, overrides = {}) {
     startupNotifyChatIds: [],
     startupNotifyMessage: '',
     startupNotifyDeduplicatePerBoot: true,
+    startupMorningBriefEnabled: false,
+    startupMorningBriefChatIds: [],
+    startupMorningBriefMaxItems: 4,
+    startupMorningBriefMaxAgeDays: 7,
+    startupMorningBriefDeduplicateDaily: true,
+    startupMorningBriefTimeZone: DEFAULT_TIME_SERIES_MORNING_BRIEF_TIME_ZONE,
     feishuFileUploadMaxBytes: DEFAULT_FEISHU_FILE_UPLOAD_MAX_BYTES,
     feishuFileSplitChunkBytes: DEFAULT_FEISHU_FILE_SPLIT_CHUNK_BYTES,
     planFirstForTasks: true,
@@ -979,6 +1028,7 @@ function withDefaults(config, overrides = {}) {
   merged.allowFrom = normalizeList(merged.allowFrom);
   merged.groupAllowFrom = normalizeList(merged.groupAllowFrom);
   merged.startupNotifyChatIds = normalizeList(merged.startupNotifyChatIds);
+  merged.startupMorningBriefChatIds = normalizeList(merged.startupMorningBriefChatIds);
   merged.codexArgs = Array.isArray(merged.codexArgs) ? merged.codexArgs.map(String) : [];
   merged.replyChunkLimit = Number(merged.replyChunkLimit) || DEFAULT_REPLY_CHUNK_LIMIT;
   merged.codexTimeoutMs = Number(merged.codexTimeoutMs) || DEFAULT_CODEX_TIMEOUT_MS;
@@ -999,6 +1049,11 @@ function withDefaults(config, overrides = {}) {
   merged.usageLedgerFile = path.resolve(String(merged.usageLedgerFile || DEFAULT_USAGE_LEDGER_PATH));
   merged.startupNotifyMessage = String(merged.startupNotifyMessage || '').trim();
   merged.startupNotifyDeduplicatePerBoot = merged.startupNotifyDeduplicatePerBoot !== false;
+  merged.startupMorningBriefEnabled = normalizeBoolean(merged.startupMorningBriefEnabled, false);
+  merged.startupMorningBriefMaxItems = Math.max(1, Math.min(6, Number(merged.startupMorningBriefMaxItems) || 4));
+  merged.startupMorningBriefMaxAgeDays = Math.max(1, Math.min(14, Number(merged.startupMorningBriefMaxAgeDays) || 5));
+  merged.startupMorningBriefDeduplicateDaily = normalizeBoolean(merged.startupMorningBriefDeduplicateDaily, true);
+  merged.startupMorningBriefTimeZone = String(merged.startupMorningBriefTimeZone || DEFAULT_TIME_SERIES_MORNING_BRIEF_TIME_ZONE).trim() || DEFAULT_TIME_SERIES_MORNING_BRIEF_TIME_ZONE;
   merged.feishuFileUploadMaxBytes = getFeishuFileUploadMaxBytes(merged);
   merged.feishuFileSplitChunkBytes = getFeishuFileSplitChunkBytes(merged);
   merged.planFirstForTasks = merged.planFirstForTasks !== false;
@@ -1492,6 +1547,19 @@ function clearPlanSession(state, key) {
     return;
   }
   delete state.planSessions[key];
+}
+
+function clearBoundCodexThread(state, key, threadId = '') {
+  const normalizedThreadId = String(threadId || '').trim();
+  const existingSession = state.chatSessions?.[key];
+  if (existingSession && (!normalizedThreadId || existingSession.threadId === normalizedThreadId)) {
+    delete state.chatSessions[key];
+  }
+  const planSession = getPlanSession(state, key);
+  if (planSession && (!normalizedThreadId || planSession.threadId === normalizedThreadId)) {
+    planSession.threadId = '';
+    planSession.updatedAt = nowIso();
+  }
 }
 
 function planCardActionsEnabled(config) {
@@ -2049,6 +2117,22 @@ async function createTempFile(prefix) {
   return { dir: tmpDir, file: path.join(tmpDir, 'last-message.txt') };
 }
 
+// `exec resume` does not accept `-C` in newer Codex builds, so rely on cwd instead.
+function buildCodexCliArgs(config, sessionId, outputFile) {
+  const args = ['exec'];
+  if (sessionId) {
+    args.push('resume');
+  }
+  args.push('--json', '--skip-git-repo-check', '-o', outputFile);
+  args.push(...config.codexArgs);
+  if (sessionId) {
+    args.push('--', sessionId, '-');
+    return args;
+  }
+  args.push('--', '-');
+  return args;
+}
+
 function safeJsonParse(line) {
   try {
     return JSON.parse(line);
@@ -2059,19 +2143,8 @@ function safeJsonParse(line) {
 
 async function runCodexTurn(config, sessionId, prompt, hooks = {}) {
   const temp = await createTempFile('codex-feishu');
-  const args = ['-C', config.workspace];
   const promptText = typeof prompt === 'string' ? prompt : String(prompt || '');
-  if (sessionId) {
-    args.push('exec', 'resume');
-    args.push('--json', '--skip-git-repo-check', '-o', temp.file);
-    args.push(...config.codexArgs);
-    args.push('--', sessionId, '-');
-  } else {
-    args.push('exec');
-    args.push('--json', '--skip-git-repo-check', '-o', temp.file);
-    args.push(...config.codexArgs);
-    args.push('--', '-');
-  }
+  const args = buildCodexCliArgs(config, sessionId, temp.file);
   return new Promise((resolve, reject) => {
     const child = spawn(config.codexBin, args, {
       cwd: config.workspace,
@@ -2158,6 +2231,15 @@ async function runCodexTurn(config, sessionId, prompt, hooks = {}) {
         const stderrLines = stderrText.split('\n').map((line) => line.trim()).filter(Boolean).filter((line) => !line.startsWith('Warning: no last agent message;'));
         const errorText = lastErrorMessage || stderrLines.join('\n').trim();
         await cleanupTemp();
+        if (shouldTreatNonZeroCodexExitAsRecoveredReply({ exitCode: code, reply, errorText })) {
+          resolve({
+            threadId,
+            reply,
+            recoveredExitError: errorText,
+            exitCode: code,
+          });
+          return;
+        }
         if (code !== 0) {
           reject(new Error(errorText || `Codex exited with code ${code}`));
           return;
@@ -2166,7 +2248,7 @@ async function runCodexTurn(config, sessionId, prompt, hooks = {}) {
           reject(new Error(errorText || 'Codex returned an empty reply.'));
           return;
         }
-        resolve({ threadId, reply });
+        resolve({ threadId, reply, recoveredExitError: '', exitCode: code });
       } catch (error) {
         reject(error);
       }
@@ -3118,6 +3200,106 @@ async function maybeSendStartupNotification({ config, state, stateFile, client, 
   return delivered;
 }
 
+function startupMorningBriefChatIds(config) {
+  const explicitChatIds = config.startupMorningBriefChatIds || [];
+  if (explicitChatIds.length > 0) {
+    return explicitChatIds;
+  }
+  return config.startupNotifyChatIds || [];
+}
+
+function buildStartupMorningBriefItemKey(item = {}) {
+  const arxivId = String(item.arxivId || '').trim();
+  if (arxivId) {
+    return `arxiv:${arxivId}`;
+  }
+  const itemKey = String(item.itemKey || '').trim();
+  if (itemKey) {
+    return itemKey;
+  }
+  const link = String(item.link || '').trim();
+  if (link) {
+    return `link:${link}`;
+  }
+  const title = String(item.title || '').trim().toLowerCase();
+  if (title) {
+    return `title:${title}`;
+  }
+  return '';
+}
+
+function listStartupMorningBriefExcludedItemKeys(state, chatId) {
+  const record = state.startupMorningBriefs?.[chatId];
+  const sentItems = record?.sentItems;
+  if (!sentItems || typeof sentItems !== 'object') {
+    return [];
+  }
+  return Object.keys(sentItems).filter(Boolean);
+}
+
+async function maybeSendStartupMorningBrief({ config, state, stateFile, client }) {
+  if (!config.startupMorningBriefEnabled) {
+    return false;
+  }
+
+  const chatIds = startupMorningBriefChatIds(config);
+  if (chatIds.length === 0) {
+    return false;
+  }
+
+  state.startupMorningBriefs ||= {};
+  const dateKey = dateKeyInTimeZone(new Date(), config.startupMorningBriefTimeZone || DEFAULT_TIME_SERIES_MORNING_BRIEF_TIME_ZONE);
+  const pendingChatIds = chatIds.filter((chatId) => {
+    const existing = state.startupMorningBriefs?.[chatId];
+    return !(config.startupMorningBriefDeduplicateDaily && existing?.dateKey === dateKey);
+  });
+
+  if (pendingChatIds.length === 0) {
+    console.log(`startup morning brief skipped: already sent for ${dateKey}`);
+    return false;
+  }
+
+  let delivered = false;
+  for (const chatId of pendingChatIds) {
+    const existing = state.startupMorningBriefs?.[chatId] || {};
+    const excludeItemKeys = listStartupMorningBriefExcludedItemKeys(state, chatId);
+    const brief = await buildTimeSeriesMorningBrief({
+      maxItems: config.startupMorningBriefMaxItems,
+      maxAgeDays: config.startupMorningBriefMaxAgeDays,
+      timeZone: config.startupMorningBriefTimeZone || DEFAULT_TIME_SERIES_MORNING_BRIEF_TIME_ZONE,
+      excludeItemKeys,
+    });
+    const messageIds = await sendText(client, chatId, brief.text, config.replyChunkLimit);
+    const sentAt = nowIso();
+    const sentItems = {
+      ...(existing.sentItems && typeof existing.sentItems === 'object' ? existing.sentItems : {}),
+    };
+    for (const item of brief.items || []) {
+      const key = buildStartupMorningBriefItemKey(item);
+      if (!key) {
+        continue;
+      }
+      sentItems[key] = sentAt;
+    }
+    state.startupMorningBriefs[chatId] = {
+      dateKey,
+      sentAt,
+      generatedAt: brief.generatedAt,
+      chatId,
+      messageIds,
+      itemCount: brief.items.length,
+      sourceCategories: (brief.feeds || []).map((feed) => feed.category).filter(Boolean),
+      errorCount: (brief.errors || []).length,
+      sentItems,
+    };
+    await writeJson(stateFile, state);
+    console.log(`startup morning brief delivered chat=${chatId} items=${brief.items.length} errors=${(brief.errors || []).length}`);
+    delivered = true;
+  }
+
+  return delivered;
+}
+
 function shouldUseTypingIndicator(config) {
   return config.typingIndicator !== false;
 }
@@ -3168,7 +3350,7 @@ async function removeProcessingReaction(client, reactionState) {
 }
 
 async function ensureState(stateFile) {
-  const state = await readJson(stateFile, { version: 1, processedMessageIds: {}, chatSessions: {}, groupContexts: {}, activeRuns: {}, planSessions: {}, botInfo: {}, startupNotifications: {} });
+  const state = await readJson(stateFile, { version: 1, processedMessageIds: {}, chatSessions: {}, groupContexts: {}, activeRuns: {}, planSessions: {}, botInfo: {}, startupNotifications: {}, startupMorningBriefs: {} });
   state.processedMessageIds ||= {};
   state.chatSessions ||= {};
   state.groupContexts ||= {};
@@ -3176,6 +3358,7 @@ async function ensureState(stateFile) {
   state.planSessions ||= {};
   state.botInfo ||= {};
   state.startupNotifications ||= {};
+  state.startupMorningBriefs ||= {};
   return state;
 }
 
@@ -3420,10 +3603,12 @@ async function enqueueTurn({
     console.log(`message ${messageId} starting codex turn: sessionKey=${key} existingThread=${resumeThreadId || '(new)'} mode=${planningMode ? 'plan' : 'execute'}`);
     let reactionState = null;
     let observedThreadId = resumeThreadId;
+    let activeThreadId = resumeThreadId;
     let usageLedgerLogged = false;
-    const startedUsageSummary = resumeThreadId
+    let startedUsageSummary = resumeThreadId
       ? await summarizeCodexSessionUsage(config.codexSessionsRoot, resumeThreadId).catch(() => null)
       : null;
+    let resultRecoveredExitError = '';
     const staleRunAbortController = new AbortController();
     const progressState = {
       announced: false,
@@ -3482,7 +3667,7 @@ async function enqueueTurn({
         lastUpdateAt: nowIso(),
         lastProgressText: progressState.lastProgressText || 'Accepted and waiting for progress events.',
         sourceMessageId: messageId,
-        threadId: resumeThreadId,
+        threadId: observedThreadId || activeThreadId || '',
         gatewayPid: process.pid,
         codexPid: progressState.codexPid,
         ...extra,
@@ -3587,6 +3772,7 @@ async function enqueueTurn({
         onEvent: (turnEvent) => {
           if (turnEvent?.type === 'thread.started' && turnEvent.thread_id) {
             observedThreadId = turnEvent.thread_id;
+            activeThreadId = turnEvent.thread_id;
           }
           const update = extractProgressUpdate(turnEvent);
           if (!update) {
@@ -3595,26 +3781,39 @@ async function enqueueTurn({
           void sendProgressUpdate(update);
         },
       });
-      console.log(`message ${messageId} codex completed: thread=${result.threadId || resumeThreadId || '(none)'}`);
-      const attachmentPaths = extractAttachmentDirectives(result.reply || '');
-      const strippedReply = stripAttachmentDirectives(result.reply || '');
+      let effectiveResult = result;
+      resultRecoveredExitError = String(result?.recoveredExitError || '').trim();
+      if (!effectiveResult && false) {
+        throw new Error('unreachable');
+      }
+      console.log(`message ${messageId} codex completed: thread=${effectiveResult.threadId || resumeThreadId || '(none)'}`);
+      if (resultRecoveredExitError) {
+        clearBoundCodexThread(state, key, effectiveResult.threadId || resumeThreadId);
+        console.warn(`message ${messageId} auto-reset unhealthy thread after recovered exit: ${oneLine(resultRecoveredExitError)}`);
+      }
+      const attachmentPaths = extractAttachmentDirectives(effectiveResult.reply || '');
+      const strippedReply = stripAttachmentDirectives(effectiveResult.reply || '');
       const extractedPlan = extractPlanDirective(strippedReply, config.planQuestionLimit);
       const cleanReply = planningMode ? extractedPlan.cleanText : strippedReply;
       progressState.finished = true;
       await flushProgressUpdates();
-      state.chatSessions[key] = {
-        threadId: result.threadId || resumeThreadId,
-        chatId,
-        chatType,
-        senderOpenId,
-        updatedAt: nowIso(),
-        lastMessageId: messageId,
-      };
+      if (resultRecoveredExitError) {
+        delete state.chatSessions[key];
+      } else {
+        state.chatSessions[key] = {
+          threadId: effectiveResult.threadId || resumeThreadId,
+          chatId,
+          chatType,
+          senderOpenId,
+          updatedAt: nowIso(),
+          lastMessageId: messageId,
+        };
+      }
       if (planningMode) {
         const planMeta = extractedPlan.plan || { status: 'ready', questions: [] };
         ensurePlanSessions(state)[key] = {
           status: planMeta.status === 'needs_input' ? 'awaiting_answers' : 'awaiting_approval',
-          threadId: result.threadId || resumeThreadId,
+          threadId: resultRecoveredExitError ? '' : (effectiveResult.threadId || resumeThreadId),
           chatId,
           chatType,
           senderOpenId,
@@ -3633,12 +3832,15 @@ async function enqueueTurn({
       state.processedMessageIds[messageId] = nowIso();
       trimProcessed(state);
       await writeJson(stateFile, state);
-      observedThreadId = result.threadId || observedThreadId || resumeThreadId;
+      observedThreadId = effectiveResult.threadId || observedThreadId || resumeThreadId;
       await appendUsageLedger({
         status: 'completed',
         finalThreadId: observedThreadId,
       });
-      const replyText = planningMode ? decoratePlanReply(cleanReply, extractedPlan.plan || { status: 'ready', questions: [] }) : cleanReply;
+      const replyTextBase = planningMode ? decoratePlanReply(cleanReply, extractedPlan.plan || { status: 'ready', questions: [] }) : cleanReply;
+      const replyText = resultRecoveredExitError
+        ? `${buildCodexSessionResetNotice()}\n\n${replyTextBase}`.trim()
+        : replyTextBase;
       if (replyText) {
         replyMessageIds = await sendReplyTextWithFallback(client, progressState.replyTargetMessageId, chatId, replyText, config.replyChunkLimit);
         if (replyMessageIds.length > 0) {
@@ -3674,11 +3876,146 @@ async function enqueueTurn({
       }
       console.log(`message ${messageId} reply delivered`);
       return {
-        threadId: result.threadId || resumeThreadId || '',
+        threadId: effectiveResult.threadId || resumeThreadId || '',
         replyMessageIds,
         sourceMessageId: messageId,
       };
     } catch (error) {
+      if (shouldAutoResetCodexThreadAfterFailure(error, resumeThreadId)) {
+        console.warn(`message ${messageId} resume thread failed and will be retried fresh: thread=${resumeThreadId} error=${oneLine(error instanceof Error ? error.message : String(error))}`);
+        clearBoundCodexThread(state, key, resumeThreadId);
+        observedThreadId = '';
+        activeThreadId = '';
+        progressState.codexPid = null;
+        startedUsageSummary = null;
+        await persistActiveRun({
+          lastProgressText: 'Previous Codex thread became unhealthy. Retrying in a fresh thread.',
+          todoItems: [],
+          threadId: '',
+          codexPid: null,
+        });
+        scheduleStaleRunCheck();
+        try {
+          const retryResult = await runCodexTurn(config, '', prompt, {
+            signal: staleRunAbortController.signal,
+            onSpawn: ({ pid }) => {
+              progressState.codexPid = Number(pid) || null;
+              void persistActiveRun({
+                lastProgressText: 'Retrying in a fresh Codex thread.',
+                todoItems: state.activeRuns[key]?.todoItems || [],
+                threadId: '',
+                codexPid: progressState.codexPid,
+              });
+              scheduleStaleRunCheck();
+            },
+            onEvent: (turnEvent) => {
+              if (turnEvent?.type === 'thread.started' && turnEvent.thread_id) {
+                observedThreadId = turnEvent.thread_id;
+                activeThreadId = turnEvent.thread_id;
+              }
+              const update = extractProgressUpdate(turnEvent);
+              if (!update) {
+                return;
+              }
+              void sendProgressUpdate(update);
+            },
+          });
+          resultRecoveredExitError = String(retryResult?.recoveredExitError || '').trim();
+          console.log(`message ${messageId} fresh-thread retry completed: thread=${retryResult.threadId || '(none)'}`);
+          const attachmentPaths = extractAttachmentDirectives(retryResult.reply || '');
+          const strippedReply = stripAttachmentDirectives(retryResult.reply || '');
+          const extractedPlan = extractPlanDirective(strippedReply, config.planQuestionLimit);
+          const cleanReply = planningMode ? extractedPlan.cleanText : strippedReply;
+          progressState.finished = true;
+          await flushProgressUpdates();
+          if (resultRecoveredExitError) {
+            clearBoundCodexThread(state, key, retryResult.threadId || '');
+          } else {
+            state.chatSessions[key] = {
+              threadId: retryResult.threadId || '',
+              chatId,
+              chatType,
+              senderOpenId,
+              updatedAt: nowIso(),
+              lastMessageId: messageId,
+            };
+          }
+          if (planningMode) {
+            const planMeta = extractedPlan.plan || { status: 'ready', questions: [] };
+            ensurePlanSessions(state)[key] = {
+              status: planMeta.status === 'needs_input' ? 'awaiting_answers' : 'awaiting_approval',
+              threadId: resultRecoveredExitError ? '' : (retryResult.threadId || ''),
+              chatId,
+              chatType,
+              senderOpenId,
+              sourceMessageId: currentPlanSession?.sourceMessageId || messageId,
+              createdAt: currentPlanSession?.createdAt || nowIso(),
+              updatedAt: nowIso(),
+              originalRequest: originalRequest || currentPlanSession?.originalRequest || '(unknown)',
+              latestPlanText: cleanReply,
+              questions: planMeta.status === 'needs_input' ? (planMeta.questions || []) : [],
+              lastMessageId: messageId,
+            };
+          } else if (clearPlanOnSuccess) {
+            clearPlanSession(state, key);
+          }
+          delete state.activeRuns[key];
+          state.processedMessageIds[messageId] = nowIso();
+          trimProcessed(state);
+          await writeJson(stateFile, state);
+          observedThreadId = retryResult.threadId || observedThreadId || '';
+          await appendUsageLedger({
+            status: 'completed',
+            finalThreadId: observedThreadId,
+          });
+          const replyTextBase = planningMode ? decoratePlanReply(cleanReply, extractedPlan.plan || { status: 'ready', questions: [] }) : cleanReply;
+          const recoveryNotice = resultRecoveredExitError
+            ? buildCodexSessionResetNotice()
+            : 'I reset the previous Codex thread automatically and continued this request in a fresh thread. Re-send any key context if you still need it.';
+          const replyText = `${recoveryNotice}\n\n${replyTextBase}`.trim();
+          if (replyText) {
+            replyMessageIds = await sendReplyTextWithFallback(client, progressState.replyTargetMessageId, chatId, replyText, config.replyChunkLimit);
+            if (replyMessageIds.length > 0) {
+              progressState.replyTargetMessageId = replyMessageIds[replyMessageIds.length - 1];
+            }
+          } else if (attachmentPaths.length === 0) {
+            replyMessageIds = await sendText(client, chatId, recoveryNotice);
+          }
+          if (planningMode) {
+            await maybeSendPlanCard({
+              client,
+              chatId,
+              replyTargetMessageId: progressState.replyTargetMessageId,
+              key,
+              state,
+              stateFile,
+              config,
+            });
+          }
+          if (!planningMode && attachmentPaths.length > 0) {
+            const attachmentResults = await sendOutboundAttachments(client, progressState.replyTargetMessageId, attachmentPaths, config);
+            const failed = attachmentResults.filter((item) => !item.ok);
+            if (failed.length > 0) {
+              const failedLines = await Promise.all(failed.map((item) => formatOutboundAttachmentFailure(item)));
+              await sendReplyTextWithFallback(
+                client,
+                progressState.replyTargetMessageId,
+                chatId,
+                `Attachment delivery failed:\n${failedLines.join('\n')}`,
+                config.replyChunkLimit,
+              );
+            }
+          }
+          console.log(`message ${messageId} reply delivered after fresh-thread recovery`);
+          return {
+            threadId: retryResult.threadId || '',
+            replyMessageIds,
+            sourceMessageId: messageId,
+          };
+        } catch (retryError) {
+          error = retryError;
+        }
+      }
       progressState.finished = true;
       await flushProgressUpdates();
       delete state.activeRuns[key];
@@ -4342,17 +4679,31 @@ async function commandWatch(config) {
     if (startupNotifyInFlight) {
       return startupNotifyInFlight;
     }
-    startupNotifyInFlight = maybeSendStartupNotification({
-      config,
-      state,
-      stateFile,
-      client,
-      botInfo,
-      queues,
-      startupContext: { clearedActiveRuns },
-    }).catch((error) => {
-      console.error(`startup notification failed: ${describeError(error)}`);
-    }).finally(() => {
+    startupNotifyInFlight = (async () => {
+      try {
+        await maybeSendStartupNotification({
+          config,
+          state,
+          stateFile,
+          client,
+          botInfo,
+          queues,
+          startupContext: { clearedActiveRuns },
+        });
+      } catch (error) {
+        console.error(`startup notification failed: ${describeError(error)}`);
+      }
+      try {
+        await maybeSendStartupMorningBrief({
+          config,
+          state,
+          stateFile,
+          client,
+        });
+      } catch (error) {
+        console.error(`startup morning brief failed: ${describeError(error)}`);
+      }
+    })().finally(() => {
       startupNotifyInFlight = null;
     });
     return startupNotifyInFlight;
@@ -4540,6 +4891,12 @@ async function loadConfig(options) {
     groupAllowFrom: options['group-allow-from'] || fileConfig.groupAllowFrom,
     groupSessionScope: options['group-session-scope'] || fileConfig.groupSessionScope,
     groupAssistantMode: options['group-assistant-mode'] || fileConfig.groupAssistantMode,
+    startupMorningBriefEnabled: options['startup-morning-brief-enabled'] ?? process.env.FEISHU_STARTUP_MORNING_BRIEF_ENABLED ?? fileConfig.startupMorningBriefEnabled,
+    startupMorningBriefChatIds: options['startup-morning-brief-chat-ids'] || process.env.FEISHU_STARTUP_MORNING_BRIEF_CHAT_IDS || fileConfig.startupMorningBriefChatIds,
+    startupMorningBriefMaxItems: options['startup-morning-brief-max-items'] || process.env.FEISHU_STARTUP_MORNING_BRIEF_MAX_ITEMS || fileConfig.startupMorningBriefMaxItems,
+    startupMorningBriefMaxAgeDays: options['startup-morning-brief-max-age-days'] || process.env.FEISHU_STARTUP_MORNING_BRIEF_MAX_AGE_DAYS || fileConfig.startupMorningBriefMaxAgeDays,
+    startupMorningBriefDeduplicateDaily: options['startup-morning-brief-deduplicate-daily'] ?? process.env.FEISHU_STARTUP_MORNING_BRIEF_DEDUPLICATE_DAILY ?? fileConfig.startupMorningBriefDeduplicateDaily,
+    startupMorningBriefTimeZone: options['startup-morning-brief-time-zone'] || process.env.FEISHU_STARTUP_MORNING_BRIEF_TIME_ZONE || fileConfig.startupMorningBriefTimeZone,
     planCardsEnabled: options['plan-cards-enabled'] ?? process.env.FEISHU_PLAN_CARDS_ENABLED ?? fileConfig.planCardsEnabled,
     cardCallbackEnabled: options['card-callback-enabled'] ?? process.env.FEISHU_CARD_CALLBACK_ENABLED ?? fileConfig.cardCallbackEnabled,
     cardLongConnectionEnabled: options['card-long-connection-enabled'] ?? process.env.FEISHU_CARD_LONG_CONNECTION_ENABLED ?? fileConfig.cardLongConnectionEnabled,
@@ -4583,6 +4940,8 @@ async function main() {
 
 export {
   buildCallbackUrlFromBase,
+  buildCodexCliArgs,
+  buildCodexSessionResetNotice,
   buildLocalCardCallbackUrl,
   buildPlanCard,
   buildPlanExecutionPrompt,
@@ -4595,9 +4954,13 @@ export {
   getFeishuFileSplitChunkBytes,
   getFeishuFileUploadMaxBytes,
   handlePlanCardAction,
+  clearBoundCodexThread,
+  isRecoverableCodexExitErrorMessage,
   isSimpleDirectExecuteCandidate,
   isOutboundAttachmentTooLarge,
   shouldAutoPlanMessage,
+  shouldAutoResetCodexThreadAfterFailure,
+  shouldTreatNonZeroCodexExitAsRecoveredReply,
   sendOutboundAttachment,
   sendOutboundAttachments,
   splitFileForUpload,

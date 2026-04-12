@@ -58,7 +58,7 @@ if (-not $WifiPortalLoginScript) {
   }
 }
 
-$logonArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$StartScript`" -GatewayRoot `"$GatewayRoot`" -ConfigPath `"$ConfigPath`" -NodePath `"$NodePath`" -WaitForInternetSeconds $WaitForInternetSeconds -InternetCheckIntervalSeconds $InternetCheckIntervalSeconds -InternetProbeUrlsCsv `"$InternetProbeUrlsCsv`""
+$logonArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$StartScript`" -GatewayRoot `"$GatewayRoot`" -ConfigPath `"$ConfigPath`" -NodePath `"$NodePath`" -UserProfilePath `"$UserProfilePath`" -WaitForInternetSeconds $WaitForInternetSeconds -InternetCheckIntervalSeconds $InternetCheckIntervalSeconds -InternetProbeUrlsCsv `"$InternetProbeUrlsCsv`""
 if ($WifiPortalLoginScript) {
   $logonArgs = "$logonArgs -WifiPortalLoginScript `"$WifiPortalLoginScript`""
 }
@@ -80,7 +80,7 @@ if (-not $SkipBootTask) {
 }
 
 if (-not $SkipHealthTask) {
-  $healthArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$HealthScript`" -GatewayRoot `"$GatewayRoot`" -ConfigPath `"$ConfigPath`" -NodePath `"$NodePath`" -StaleActiveRunMinutes $StaleActiveRunMinutes -RestartCooldownMinutes $HealthRestartCooldownMinutes -WaitForInternetSeconds 60 -InternetCheckIntervalSeconds $InternetCheckIntervalSeconds -InternetProbeUrlsCsv `"$InternetProbeUrlsCsv`""
+  $healthArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$HealthScript`" -GatewayRoot `"$GatewayRoot`" -ConfigPath `"$ConfigPath`" -NodePath `"$NodePath`" -UserProfilePath `"$UserProfilePath`" -StaleActiveRunMinutes $StaleActiveRunMinutes -RestartCooldownMinutes $HealthRestartCooldownMinutes -WaitForInternetSeconds 60 -InternetCheckIntervalSeconds $InternetCheckIntervalSeconds -InternetProbeUrlsCsv `"$InternetProbeUrlsCsv`""
   if ($WifiPortalLoginScript) {
     $healthArgs = "$healthArgs -WifiPortalLoginScript `"$WifiPortalLoginScript`""
   }

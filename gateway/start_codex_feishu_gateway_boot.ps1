@@ -37,16 +37,6 @@ if (-not $NodePath) {
   }
 }
 
-# When launched as SYSTEM at boot, point Codex back to the target user profile
-# so it can reuse that user's existing auth/config/session files.
-$env:USERPROFILE = $UserProfilePath
-$env:HOME = $UserProfilePath
-$env:HOMEDRIVE = [System.IO.Path]::GetPathRoot($UserProfilePath).TrimEnd('\')
-$env:HOMEPATH = $UserProfilePath.Substring($env:HOMEDRIVE.Length)
-$env:USERNAME = Split-Path -Leaf $UserProfilePath
-$env:FEISHU_GATEWAY_CONFIG = $ConfigPath
-$env:NODE_BIN = $NodePath
-
 Set-Location $GatewayRoot
 
 if ($BootDelaySeconds -gt 0) {
@@ -59,11 +49,13 @@ if (-not (Test-Path $LauncherScript)) {
   throw "Gateway launcher script not found: $LauncherScript"
 }
 
+Write-BootLogLine -Message "boot task target user profile=$UserProfilePath"
 Write-BootLogLine -Message "boot task launching supervisor via $LauncherScript"
 & $LauncherScript `
   -GatewayRoot $GatewayRoot `
   -ConfigPath $ConfigPath `
   -NodePath $NodePath `
+  -UserProfilePath $UserProfilePath `
   -WaitForInternetSeconds $WaitForInternetSeconds `
   -InternetCheckIntervalSeconds $InternetCheckIntervalSeconds `
   -InternetProbeUrlsCsv $InternetProbeUrlsCsv

@@ -1,14 +1,18 @@
 {
-  "name": "codex-feishu-gateway-migration-kit",
+  "name": "openclaw-codex-feishu-gateway",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Sanitized migration kit for connecting Codex to Feishu over long connection.",
+  "description": "Public Feishu gateway framework for Codex, with Windows startup automation, health checks, exports, and reusable operations.",
   "scripts": {
     "auth-test": "node codex_feishu_gateway.mjs auth-test --config ./feishu_gateway.json",
     "watch": "node codex_feishu_gateway.mjs watch --config ./feishu_gateway.json",
+    "watch:supervisor": "powershell -ExecutionPolicy Bypass -File ./run_codex_feishu_gateway_supervisor.ps1",
+    "health:check": "powershell -ExecutionPolicy Bypass -File ./check_codex_feishu_gateway_health.ps1",
     "usage:group": "node report_feishu_group_usage.mjs",
     "usage:ledger": "node report_feishu_usage_ledger.mjs",
+    "export:members": "node export_feishu_chat_members.mjs",
+    "brief:timeseries": "node timeseries_morning_brief.mjs",
     "test": "node --test"
   },
   "dependencies": {

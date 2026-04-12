@@ -1,0 +1,7 @@
+interface:
+  display_name: "Long Task Orchestrator"
+  short_description: "Manage background long tasks with ETA and progress updates."
+  default_prompt: "Use $long-task-orchestrator to run this long task in the background, estimate ETA, and report progress until completion."
+
+policy:
+  allow_implicit_invocation: true

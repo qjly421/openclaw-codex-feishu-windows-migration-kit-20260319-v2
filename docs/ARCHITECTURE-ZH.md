@@ -1,183 +1,149 @@
 # 架构说明
 
-## 1. 总体目标
+## 1. 项目现在的定位
 
-这套系统的目标是把一台 Windows 机器做成可通过飞书远程驱动的本地 Codex 执行节点。
+这套系统现在分成两层：
 
-适用场景：
+- `gateway/`：Feishu 和 Codex 的本地执行网关
+- `skills/`：可跨设备复用的 Codex skill 层
 
-- 机器断电后需要自动恢复
-- 开机后希望自动通知指定飞书会话
-- 需要在飞书里继续同一个 Codex 会话
-- 需要支持附件回传
-- 需要支持 `/plan`、`/approve`、`/cancel`
-- 需要群聊公共上下文，同时又不想让不同发言人共用同一个执行会话
+它已经不是单纯的“把某台 Windows 机器迁过去”。
+它现在更像一个公共框架仓库，负责承载：
+
+- Feishu 消息入口
+- Codex 会话调度
+- 附件收发
+- 启动和自恢复
+- 长任务后台运行规范
+- 公开 skill 分发
 
 ## 2. 核心组件
 
-1. 飞书应用
-   - 提供 Bot 能力
-   - 通过长连接接收 `im.message.receive_v1`
-   - 可选支持卡片动作
+### `gateway/`
 
-2. 网关主程序
-   - 文件：`gateway/codex_feishu_gateway.mjs`
-   - 作用：接收飞书消息、映射会话、拉起 Codex、回传文本和附件
+这一层负责把 Feishu 消息变成对本地 Codex 的调用。
 
-3. 启动脚本
-   - 文件：`gateway/start_codex_feishu_gateway.ps1`
-   - 作用：等待网络、拉起 `node.exe`、写入状态文件、记录启动方式
-   - 当前启动方式是 `direct_node_launch`
-
-4. 健康检查脚本
-   - 文件：`gateway/check_codex_feishu_gateway_health.ps1`
-   - 作用：每隔几分钟巡检一次，发现网关消失或会话卡死时自动重启
-
-5. 计划任务安装脚本
-   - 文件：`gateway/install_codex_feishu_task.ps1`
-   - 默认安装 3 个任务：
-   - `CodexFeishuGateway`
-   - `CodexFeishuGatewayBoot`
-   - `CodexFeishuGatewayHealth`
-
-6. 运行态目录
-   - 不在本包内
-   - 应放在 `<RUNTIME_ROOT>`
-   - 保存状态文件、日志、附件缓存、用量台账
-
-## 3. 消息处理链路
-
-1. 用户在飞书中发送消息
-2. 飞书通过长连接把事件投递给网关
-3. 网关根据聊天类型和配置计算 `sessionKey`
-4. 同一个 `sessionKey` 内串行，不同 `sessionKey` 之间可并行
-5. 网关执行 `codex exec` 或 `codex exec resume`
-6. Codex 输出文本、计划、进度或附件路径
-7. 网关把结果回发到飞书
-
-关键结论：
-
-- 这套代码不是全局单队列
-- 主要是按 `sessionKey` 做排队
-- 在 `groupSessionScope = group_sender` 时，群聊里的不同发言人天然拆分到不同会话
-
-## 4. 会话映射
-
-私聊：
-
-- 一个聊天通常对应一个 `sessionKey`
-
-群聊：
-
-- 当 `groupSessionScope = group_sender` 时
-- `sessionKey` 形如 `<FEISHU_CHAT_ID>:sender:<FEISHU_OPEN_ID>`
-- 这意味着同一个群里的不同发言人不会共用同一个执行队列
-
-## 5. 群聊模式
-
-当前现场使用的是：
-
-- `groupAssistantMode = hybrid`
-
-含义：
-
-- 在群里优先做公共回答
-- 同时保留每个发言人的独立执行上下文
-- 允许保留公共群记忆、重点问题和最近消息摘要
-
-## 6. 计划模式与卡片
-
-主流程支持：
-
-- `/plan`
-- `/approve`
-- `/cancel`
-- `/progress`
-- `/run`
-
-卡片相关有两种路径：
-
-1. 显示卡片但按钮不生效
-   - `planCardsEnabled = true`
-   - `cardCallbackEnabled = false`
-   - `cardLongConnectionEnabled = false`
-
-2. 卡片按钮可交互
-   - HTTP 回调模式：`cardCallbackEnabled = true`
-   - 或长连接卡片动作模式：`cardLongConnectionEnabled = true`
-
-当前现场整理出的配置特征是：
-
-- `planCardsEnabled = true`
-- `cardCallbackEnabled = false`
-- `cardLongConnectionEnabled = true`
-
-## 7. 启动通知
-
-系统支持开机自检后向指定飞书会话发送启动通知。
-
-关键点：
-
-- `startupNotifyChatIds` 指定通知目标
-- `startupNotifyDeduplicatePerBoot = true` 用于避免同一次开机里的重复通知
-- 当前代码支持把启动通知做成一次真实 Codex 回复，而不是纯网关硬编码文本
-
-## 8. 附件收发
-
-入站：
-
-- 网关可下载飞书图片和文件到本地
-
-出站：
-
-- Codex 回复中追加一行绝对路径即可触发上传
-- 例如 `[feishu-attachment] C:\path\to\file.pdf`
-
-依赖条件：
-
-- 路径必须是绝对路径
-- 文件必须存在
-- 目标飞书应用要有相应文件/图片权限
-- 日志和运行态目录要可写
-
-## 9. 可用性设计
-
-这套结构为了应对断电、网络晚到、旧会话卡死等现场问题，补了几层兜底：
-
-1. 启动脚本支持等待网络
-2. 计划任务既有登录触发，也有开机触发
-3. 健康检查任务定期巡检
-4. 会清理 `activeRuns` 里的 stale run
-5. 如果某个 `codexPid` 已不存在，会触发回收
-6. 当前代码还加入了首个事件 watchdog
-
-首个事件 watchdog 的意义：
-
-- `gateway/codex_feishu_gateway.mjs` 里默认 `codexFirstEventTimeoutMs = 60000`
-- 如果 `codex resume/start` 拉起后长时间没有任何 JSON 事件输出
-- 会主动判定为 stalled 并中止，避免同一个会话被卡死很久
-
-## 10. 关键脚本对照
+核心文件：
 
 - `gateway/codex_feishu_gateway.mjs`
-  - 主消息网关
 - `gateway/start_codex_feishu_gateway.ps1`
-  - 入口启动脚本
 - `gateway/check_codex_feishu_gateway_health.ps1`
-  - 巡检与自动重启
 - `gateway/install_codex_feishu_task.ps1`
-  - 计划任务安装
-- `gateway/report_feishu_group_usage.mjs`
-  - 群聊使用情况统计
-- `gateway/report_feishu_usage_ledger.mjs`
-  - 用量台账统计
+- `gateway/run_codex_feishu_gateway_supervisor.ps1`
 
-## 11. 迁移建议
+主要能力：
 
-迁移时不要复制现场运行态目录，而是：
+- Feishu 长连接收消息
+- 聊天到 Codex 会话的映射
+- 计划模式和普通模式透传
+- 入站附件下载
+- 出站 `[feishu-attachment]` 上传
+- 启动通知
+- 健康检查和自动重启
+- 成员导出和统计脚本
+- 定时报送脚本入口
 
-1. 复制 `gateway/` 代码
-2. 在新机器重新安装 Node.js 和 Codex CLI
-3. 在新机器重新创建真实配置文件
-4. 用新的飞书应用密钥、聊天 ID、运行态目录和工作区路径替换占位符
-5. 先前台验证，再安装计划任务
+### `skills/`
+
+这一层负责跨设备复用行为规范，而不是只靠某台机器的脚本约定。
+
+当前 public 技能：
+
+- `skills/codex-feishu-gateway`
+- `skills/long-task-orchestrator`
+
+其中：
+
+- `codex-feishu-gateway` 负责部署、迁移、排障网关
+- `long-task-orchestrator` 负责长任务后台化、ETA、里程碑汇报、完成提醒和可恢复状态
+
+## 3. 消息处理路径
+
+标准链路如下：
+
+1. 用户在 Feishu 发消息
+2. 网关接收 `im.message.receive_v1`
+3. 网关根据聊天类型和配置生成 `sessionKey`
+4. 同一个 `sessionKey` 串行执行，不同 `sessionKey` 并行执行
+5. 网关调用本地 Codex
+6. Codex 返回文本、规划结果、附件路径或长任务状态
+7. 网关把结果回发到 Feishu
+
+## 4. 长任务处理路径
+
+长任务不应该只靠网关前台阻塞等待。
+
+现在公开建议的路径是：
+
+1. 先由 skill 判断是否进入长任务模式
+2. 给出粗略 ETA
+3. 启动后台进程
+4. 落盘 `status.json`、日志和可恢复结果
+5. 按里程碑而不是固定小时数汇报
+6. 结束时发送完成或失败通知
+
+这部分规范放在：
+
+- `skills/long-task-orchestrator/`
+
+## 5. 运行态与仓库内容的边界
+
+仓库里放的是可复用框架。
+运行时状态不进仓库。
+
+典型运行态内容：
+
+- `.codex-feishu-gateway/`
+- 日志
+- 媒体缓存
+- 状态文件
+- 本机真实配置
+- 长任务运行目录
+
+这些都应保持本机或 private 层，不应进入 public 仓库。
+
+## 6. public 与 private 的分工
+
+### public
+
+适合放：
+
+- 网关代码
+- 公开 skills
+- 脱敏配置模板
+- 部署文档
+- 公开通用脚本
+
+### private
+
+适合放：
+
+- 科研代码
+- 任务专用脚本
+- 私有 skill
+- 敏感配置
+- 数据接口
+- 实验输出
+
+详细边界见：
+
+- `docs/PUBLIC-PRIVATE-BOUNDARY-ZH.md`
+
+## 7. 建议的长期形态
+
+长期推荐形态不是一个仓库包打天下，而是：
+
+- public 框架仓库
+- private 科研仓库
+- 每台机器本地运行态目录
+
+Agent 的同步顺序应当是：
+
+1. 先同步 public 框架
+2. 再同步 private 任务层
+3. 最后挂上本机真实配置和运行态目录
+
+对应说明见：
+
+- `docs/AGENT-SYNC-WORKFLOW-ZH.md`
+- `templates/private-companion-repo/README-ZH.md`

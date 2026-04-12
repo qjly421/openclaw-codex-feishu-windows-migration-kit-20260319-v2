@@ -2,31 +2,65 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LABEL="${FEISHU_GATEWAY_LABEL:-com.example.codex.feishu-gateway}"
+LABEL="${FEISHU_GATEWAY_LABEL:-com.openclaw.codex-feishu-gateway}"
 RUNTIME_ROOT="${FEISHU_GATEWAY_RUNTIME_ROOT:-$HOME/.codex-feishu-gateway}"
 RUNTIME_DIR="$RUNTIME_ROOT/runtime"
 LOG_DIR="$RUNTIME_ROOT/log"
 CONFIG_PATH="${FEISHU_GATEWAY_CONFIG:-$RUNTIME_ROOT/feishu_gateway.json}"
-REPO_GATEWAY_SCRIPT="${CODEX_FEISHU_GATEWAY_SCRIPT:-$SCRIPT_DIR/codex_feishu_gateway.mjs}"
-RUNTIME_GATEWAY_SCRIPT="$RUNTIME_DIR/codex_feishu_gateway.mjs"
+REPO_GATEWAY_ROOT="${CODEX_FEISHU_GATEWAY_ROOT:-$SCRIPT_DIR}"
+REPO_GATEWAY_SCRIPT="${CODEX_FEISHU_GATEWAY_SCRIPT:-$REPO_GATEWAY_ROOT/codex_feishu_gateway.mjs}"
+PACKAGE_JSON="${CODEX_FEISHU_GATEWAY_PACKAGE_JSON:-$REPO_GATEWAY_ROOT/package.json}"
 RUNTIME_RUNNER="$RUNTIME_DIR/run_codex_feishu_gateway.sh"
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 UID_VALUE="$(id -u)"
 
 mkdir -p "$HOME/Library/LaunchAgents" "$RUNTIME_DIR" "$LOG_DIR"
-cp "$REPO_GATEWAY_SCRIPT" "$RUNTIME_GATEWAY_SCRIPT"
-chmod 755 "$RUNTIME_GATEWAY_SCRIPT"
+
+if [[ ! -f "$REPO_GATEWAY_SCRIPT" ]]; then
+  echo "Gateway script not found: $REPO_GATEWAY_SCRIPT" >&2
+  exit 1
+fi
+
+if [[ ! -f "$PACKAGE_JSON" ]]; then
+  echo "Gateway package.json not found: $PACKAGE_JSON" >&2
+  exit 1
+fi
+
+if [[ ! -d "$REPO_GATEWAY_ROOT/node_modules/@larksuiteoapi/node-sdk" ]]; then
+  echo "Gateway dependencies are missing under $REPO_GATEWAY_ROOT/node_modules." >&2
+  echo "Run ./bootstrap_codex_feishu_macos.sh first." >&2
+  exit 1
+fi
 
 cat > "$RUNTIME_RUNNER" <<RUNNER
 #!/usr/bin/env bash
 set -euo pipefail
-if command -v node >/dev/null 2>&1; then
-  NODE_BIN="$(command -v node)"
-else
-  NODE_BIN="/opt/homebrew/bin/node"
+
+NODE_CANDIDATES=(
+  "\${FEISHU_GATEWAY_NODE_BIN:-}"
+  "\$(command -v node 2>/dev/null || true)"
+  "/opt/homebrew/bin/node"
+  "/usr/local/bin/node"
+)
+NODE_BIN=""
+for candidate in "\${NODE_CANDIDATES[@]}"; do
+  if [[ -n "\$candidate" && -x "\$candidate" ]]; then
+    NODE_BIN="\$candidate"
+    break
+  fi
+done
+if [[ -z "\$NODE_BIN" ]]; then
+  echo "Node.js executable not found for launchd runner." >&2
+  exit 1
 fi
+
+export PATH="${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export FEISHU_GATEWAY_CONFIG="$CONFIG_PATH"
-exec "$NODE_BIN" "$RUNTIME_GATEWAY_SCRIPT" watch --config "$CONFIG_PATH"
+export FEISHU_GATEWAY_RUNTIME_ROOT="$RUNTIME_ROOT"
+export CODEX_HOME="\${CODEX_HOME:-$HOME/.codex}"
+
+cd "$REPO_GATEWAY_ROOT"
+exec "\$NODE_BIN" "$REPO_GATEWAY_SCRIPT" watch --config "$CONFIG_PATH"
 RUNNER
 chmod 755 "$RUNTIME_RUNNER"
 
@@ -43,13 +77,15 @@ cat > "$PLIST" <<PLIST
     <string>${RUNTIME_RUNNER}</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${HOME}</string>
+  <string>${REPO_GATEWAY_ROOT}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME</key>
     <string>${HOME}</string>
+    <key>CODEX_HOME</key>
+    <string>${HOME}/.codex</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

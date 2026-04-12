@@ -2,6 +2,7 @@ param(
   [string]$GatewayRoot = $PSScriptRoot,
   [string]$ConfigPath = "${env:USERPROFILE}\.codex-feishu-gateway\feishu_gateway.json",
   [string]$NodePath = "",
+  [string]$UserProfilePath = "",
   [int]$StaleActiveRunMinutes = 5,
   [int]$RestartCooldownMinutes = 5,
   [int]$WaitForInternetSeconds = 60,
@@ -27,6 +28,78 @@ if (-not (Test-Path $GatewayScript)) {
 }
 if (-not (Test-Path $StartScript)) {
   throw "Gateway start script not found: $StartScript"
+}
+
+function Normalize-DirectoryPath {
+  param([string]$Path)
+
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return ''
+  }
+
+  try {
+    return [System.IO.Path]::GetFullPath($Path.Trim())
+  } catch {
+    return ''
+  }
+}
+
+function Get-SystemProfilePath {
+  Normalize-DirectoryPath -Path (Join-Path $env:SystemRoot 'System32\config\systemprofile')
+}
+
+function Resolve-TargetUserProfilePath {
+  param(
+    [string]$RequestedPath,
+    [string]$ConfigFilePath,
+    [string]$GatewayRootPath
+  )
+
+  $candidates = New-Object System.Collections.Generic.List[string]
+  if ($RequestedPath) {
+    $candidates.Add($RequestedPath)
+  }
+
+  $normalizedConfigPath = Normalize-DirectoryPath -Path $ConfigFilePath
+  if ($normalizedConfigPath) {
+    $configParent = Split-Path -Parent $normalizedConfigPath
+    if ((Split-Path -Leaf $configParent) -ieq '.codex-feishu-gateway') {
+      $candidates.Add((Split-Path -Parent $configParent))
+    }
+  }
+
+  $normalizedGatewayRoot = Normalize-DirectoryPath -Path $GatewayRootPath
+  if ($normalizedGatewayRoot) {
+    $gatewayParent = Split-Path -Parent $normalizedGatewayRoot
+    if ($gatewayParent -match '^[A-Za-z]:\\Users\\[^\\]+$') {
+      $candidates.Add($gatewayParent)
+    }
+  }
+
+  if ($env:USERPROFILE) {
+    $candidates.Add($env:USERPROFILE)
+  }
+
+  $systemProfilePath = Get-SystemProfilePath
+  $fallback = ''
+
+  foreach ($candidate in $candidates) {
+    $normalizedCandidate = Normalize-DirectoryPath -Path $candidate
+    if (-not $normalizedCandidate -or -not (Test-Path $normalizedCandidate)) {
+      continue
+    }
+
+    if ($systemProfilePath -and $normalizedCandidate.Equals($systemProfilePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+      if (-not $fallback) {
+        $fallback = $normalizedCandidate
+      }
+      continue
+    }
+
+    return (Resolve-Path $normalizedCandidate).Path
+  }
+
+  return $fallback
 }
 
 function Write-HealthLogLine {
@@ -190,6 +263,8 @@ function Get-RestartReasons {
 
   if ($WatchProcessIds.Count -eq 0) {
     $reasons.Add('gateway_watch_process_missing')
+  } elseif ($WatchProcessIds.Count -gt 1) {
+    $reasons.Add(("duplicate_gateway_watch_processes count={0} pids={1}" -f $WatchProcessIds.Count, ($WatchProcessIds -join ',')))
   }
 
   $now = [DateTimeOffset]::Now
@@ -262,6 +337,10 @@ function Restart-CodexFeishuGateway {
 
   Start-Sleep -Seconds 2
 
+  $resolvedUserProfilePath = Resolve-TargetUserProfilePath `
+    -RequestedPath $UserProfilePath `
+    -ConfigFilePath $ConfigPath `
+    -GatewayRootPath $GatewayRoot
   $startArgs = @{
     GatewayRoot = $GatewayRoot
     ConfigPath = $ConfigPath
@@ -272,11 +351,17 @@ function Restart-CodexFeishuGateway {
   if ($NodePath) {
     $startArgs.NodePath = $NodePath
   }
+  if ($resolvedUserProfilePath) {
+    $startArgs.UserProfilePath = $resolvedUserProfilePath
+  }
   if ($WifiPortalLoginScript) {
     $startArgs.WifiPortalLoginScript = $WifiPortalLoginScript
   }
 
   try {
+    if ($resolvedUserProfilePath) {
+      Write-HealthLogLine -Message "restarting gateway with target_profile=$resolvedUserProfilePath"
+    }
     & $StartScript @startArgs | Out-Null
   } catch {
     Write-HealthLogLine -Message "gateway start script failed: $($_.Exception.Message)" -Error
