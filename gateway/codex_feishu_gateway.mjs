@@ -66,6 +66,7 @@ const DEFAULT_GROUP_HIGHLIGHT_LIMIT = 12;
 const DEFAULT_PROMPT_RECENT_GROUP_MESSAGES = 8;
 const MAX_GROUP_MEMORY_TEXT_LENGTH = 240;
 const DEFAULT_PROGRESS_UPDATES = true;
+const DEFAULT_PROGRESS_COMMAND_UPDATES = false;
 const DEFAULT_PROGRESS_INITIAL_DELAY_MS = 8000;
 const DEFAULT_PROGRESS_UPDATE_INTERVAL_MS = 15000;
 const DEFAULT_PROGRESS_MAX_MESSAGES = 6;
@@ -138,6 +139,7 @@ async function pathExists(filePath) {
 const jsonWriteQueues = new Map();
 const jsonAppendQueues = new Map();
 const codexSessionFileCache = new Map();
+const activeRunControllers = new Map();
 
 async function readJson(filePath, fallback) {
   const targetPath = path.resolve(filePath);
@@ -988,6 +990,7 @@ function withDefaults(config, overrides = {}) {
     typingIndicator: true,
     typingEmoji: DEFAULT_TYPING_EMOJI,
     progressUpdates: DEFAULT_PROGRESS_UPDATES,
+    progressCommandUpdates: DEFAULT_PROGRESS_COMMAND_UPDATES,
     progressInitialDelayMs: DEFAULT_PROGRESS_INITIAL_DELAY_MS,
     progressUpdateIntervalMs: DEFAULT_PROGRESS_UPDATE_INTERVAL_MS,
     progressMaxMessages: DEFAULT_PROGRESS_MAX_MESSAGES,
@@ -1038,6 +1041,7 @@ function withDefaults(config, overrides = {}) {
       ? parsedFirstEventTimeoutMs
       : DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_MS;
   }
+  merged.progressCommandUpdates = normalizeBoolean(merged.progressCommandUpdates, DEFAULT_PROGRESS_COMMAND_UPDATES);
   merged.groupPublicMemoryLimit = Math.max(6, Number(merged.groupPublicMemoryLimit) || DEFAULT_GROUP_PUBLIC_MEMORY_LIMIT);
   merged.groupHighlightLimit = Math.max(3, Number(merged.groupHighlightLimit) || DEFAULT_GROUP_HIGHLIGHT_LIMIT);
   merged.progressInitialDelayMs = Math.max(0, Number(merged.progressInitialDelayMs) || DEFAULT_PROGRESS_INITIAL_DELAY_MS);
@@ -1433,6 +1437,10 @@ function isDirectExecuteCommand(commandName) {
   return ['run', 'execute'].includes(String(commandName || '').toLowerCase());
 }
 
+function isExecutionStopCommand(commandName) {
+  return ['stop', 'abort'].includes(String(commandName || '').toLowerCase());
+}
+
 function normalizePlanDirectiveStatus(status, questions = []) {
   const normalized = String(status || '').trim().toLowerCase();
   if (['needs_input', 'awaiting_answers', 'question', 'questions', 'needs-info'].includes(normalized)) {
@@ -1560,6 +1568,53 @@ function clearBoundCodexThread(state, key, threadId = '') {
     planSession.threadId = '';
     planSession.updatedAt = nowIso();
   }
+}
+
+function buildUserStopError(message = 'Stopped by user via /stop.') {
+  const error = new Error(String(message || 'Stopped by user via /stop.'));
+  error.code = 'USER_STOP_REQUESTED';
+  return error;
+}
+
+function isUserStopError(error) {
+  return Boolean(error && typeof error === 'object' && error.code === 'USER_STOP_REQUESTED');
+}
+
+function registerActiveRunController(key, control) {
+  activeRunControllers.set(String(key || ''), control);
+}
+
+function clearActiveRunController(key, sourceMessageId = '') {
+  const normalizedKey = String(key || '');
+  if (!normalizedKey) {
+    return;
+  }
+  const existing = activeRunControllers.get(normalizedKey);
+  if (!existing) {
+    return;
+  }
+  if (sourceMessageId && existing.sourceMessageId && existing.sourceMessageId !== sourceMessageId) {
+    return;
+  }
+  activeRunControllers.delete(normalizedKey);
+}
+
+function requestActiveRunStop(key, reason = 'Stopped by user via /stop.') {
+  const normalizedKey = String(key || '');
+  if (!normalizedKey) {
+    return 'not_found';
+  }
+  const existing = activeRunControllers.get(normalizedKey);
+  if (!existing?.abortController) {
+    return 'not_found';
+  }
+  if (existing.stopRequested || existing.abortController.signal?.aborted) {
+    return 'already_requested';
+  }
+  existing.stopRequested = true;
+  existing.stopRequestedAt = nowIso();
+  existing.abortController.abort(buildUserStopError(reason));
+  return 'requested';
 }
 
 function planCardActionsEnabled(config) {
@@ -2448,6 +2503,16 @@ function extractProgressUpdate(event) {
     };
   }
   return null;
+}
+
+function shouldSendProgressUpdate(config, update) {
+  if (!config.progressUpdates || !update?.text) {
+    return false;
+  }
+  if (!config.progressCommandUpdates && ['command_started', 'command_completed'].includes(update.kind)) {
+    return false;
+  }
+  return true;
 }
 
 function chunkReply(text, limit) {
@@ -3517,6 +3582,7 @@ async function handleCommand({ event, command, state, config, client, botInfo })
       '/plan <task> start a planning workflow first',
       '/approve start execution from the latest approved plan',
       '/cancel clear the pending plan without resetting the whole chat session',
+      '/stop interrupt the current running task in this chat',
       '/run <task> bypass planning and execute directly',
       '/new or /reset clear the current Codex session',
       'Send a task in direct chat to plan first, then approve to execute',
@@ -3556,6 +3622,42 @@ async function maybeSendPlanCard({ client, chatId, replyTargetMessageId, key, st
   } catch (error) {
     console.warn(`plan card delivery failed for session=${key}: ${describeError(error)}`);
     return [];
+  }
+}
+
+async function patchStoredPlanCard({
+  client,
+  key,
+  state,
+  stateFile,
+  config,
+  statusText = '',
+  detailText = '',
+  fallbackMessageId = '',
+}) {
+  const planSession = getPlanSession(state, key);
+  if (!config.planCardsEnabled || !planSession) {
+    return false;
+  }
+  const messageId = String(planSession.cardMessageId || fallbackMessageId || '').trim();
+  if (!messageId) {
+    return false;
+  }
+  try {
+    await patchInteractiveCardMessage(client, messageId, buildPlanCard({
+      key,
+      planSession,
+      config,
+      statusText,
+      detailText,
+    }));
+    planSession.cardMessageId = messageId;
+    planSession.cardUpdatedAt = nowIso();
+    await writeJson(stateFile, state);
+    return true;
+  } catch (error) {
+    console.error(`stored plan card patch failed for session=${key} message_id=${messageId}: ${describeError(error)}`);
+    return false;
   }
 }
 
@@ -3620,6 +3722,13 @@ async function enqueueTurn({
       replyTargetMessageId: replyTargetMessageId || messageId,
       codexPid: null,
     };
+    registerActiveRunController(key, {
+      abortController: staleRunAbortController,
+      sourceMessageId: messageId,
+      chatId,
+      startedAt: progressState.startedAt,
+      stopRequested: false,
+    });
     let replyMessageIds = [];
     let progressUpdateChain = Promise.resolve();
     let staleRunTimer = null;
@@ -3725,7 +3834,7 @@ async function enqueueTurn({
     };
     const sendProgressUpdate = (update) => {
       progressUpdateChain = progressUpdateChain.then(async () => {
-        if (!config.progressUpdates || !update?.text || progressState.finished || !state.activeRuns[key]) {
+        if (!shouldSendProgressUpdate(config, update) || progressState.finished || !state.activeRuns[key]) {
           return;
         }
         const now = Date.now();
@@ -4019,6 +4128,40 @@ async function enqueueTurn({
       progressState.finished = true;
       await flushProgressUpdates();
       delete state.activeRuns[key];
+      if (isUserStopError(error)) {
+        const interruptedPlan = !planningMode && clearPlanOnSuccess && planFailureStatus
+          ? getPlanSession(state, key)
+          : null;
+        if (interruptedPlan) {
+          interruptedPlan.status = planFailureStatus;
+          interruptedPlan.updatedAt = nowIso();
+        }
+        state.processedMessageIds[messageId] = nowIso();
+        trimProcessed(state);
+        await writeJson(stateFile, state);
+        await appendUsageLedger({
+          status: 'stopped',
+          finalThreadId: observedThreadId || resumeThreadId,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        if (interruptedPlan) {
+          await patchStoredPlanCard({
+            client,
+            key,
+            state,
+            stateFile,
+            config,
+            statusText: 'Execution was stopped. Approve again to restart, revise in chat, or cancel this plan.',
+          });
+        }
+        console.log(`message ${messageId} stopped by user: sessionKey=${key}`);
+        return {
+          threadId: observedThreadId || resumeThreadId || '',
+          replyMessageIds,
+          sourceMessageId: messageId,
+          stopped: true,
+        };
+      }
       if (!planningMode && clearPlanOnSuccess && planFailureStatus) {
         const failedPlan = getPlanSession(state, key);
         if (failedPlan) {
@@ -4044,6 +4187,7 @@ async function enqueueTurn({
     } finally {
       progressState.finished = true;
       clearStaleRunTimer();
+      clearActiveRunController(key, messageId);
       await removeProcessingReaction(client, reactionState);
     }
   });
@@ -4198,6 +4342,8 @@ async function executePlanCardAction({
       await repairActiveRuns(source === 'unknown' ? 'card_action' : `card_action:${source}`);
     }
     const normalizedActionEvent = normalizeCardActionPayload(actionEvent);
+    const actionSessionKey = String(normalizedActionEvent?.action?.value?.session_key || '').trim();
+    const existingPlanSession = actionSessionKey ? getPlanSession(state, actionSessionKey) : null;
     const resultCard = await handlePlanCardAction({
       actionEvent: normalizedActionEvent,
       state,
@@ -4209,6 +4355,7 @@ async function executePlanCardAction({
     const targetMessageId = String(
       normalizedActionEvent?.open_message_id
       || normalizedActionEvent?.context?.open_message_id
+      || existingPlanSession?.cardMessageId
       || '',
     ).trim();
     if (source === 'long_connection') {
@@ -4291,6 +4438,7 @@ async function processEvent({ event, config, state, stateFile, client, botInfo, 
     const workflowControlCommand = commandName === 'plan'
       || isPlanApprovalCommand(commandName)
       || isPlanCancelCommand(commandName)
+      || isExecutionStopCommand(commandName)
       || isDirectExecuteCommand(commandName);
 
     if (!effectiveText && attachments.length === 0 && !workflowControlCommand) {
@@ -4311,6 +4459,26 @@ async function processEvent({ event, config, state, stateFile, client, botInfo, 
       state.processedMessageIds[messageId] = nowIso();
       await sendText(client, message.chat_id, 'Usage: /run <task description>', config.replyChunkLimit);
       await writeJson(stateFile, state);
+      return;
+    }
+
+    if (isExecutionStopCommand(commandName)) {
+      state.processedMessageIds[messageId] = nowIso();
+      const stopState = requestActiveRunStop(key, `Stopped by ${senderOpenIdOf(event) || 'user'} via /stop.`);
+      let replyText = 'No live task is running in this chat.';
+      if (stopState === 'requested') {
+        if (state.activeRuns?.[key]) {
+          state.activeRuns[key].lastUpdateAt = nowIso();
+          state.activeRuns[key].lastProgressText = 'Stop requested by user.';
+          state.activeRuns[key].stopRequestedAt = nowIso();
+        }
+        replyText = 'Stopping the current execution in this chat. Later queued messages, if any, will still run.';
+      } else if (stopState === 'already_requested') {
+        replyText = 'Stop is already in progress for this chat.';
+      }
+      trimProcessed(state);
+      await writeJson(stateFile, state);
+      await sendText(client, message.chat_id, replyText, config.replyChunkLimit);
       return;
     }
 
@@ -4379,6 +4547,13 @@ async function processEvent({ event, config, state, stateFile, client, botInfo, 
 
     if (planFailureStatus) {
       await writeJson(stateFile, state);
+      await patchStoredPlanCard({
+        client,
+        key,
+        state,
+        stateFile,
+        config,
+      });
     }
 
     const originalRequest = buildOriginalRequest({
@@ -4440,7 +4615,7 @@ async function processEvent({ event, config, state, stateFile, client, botInfo, 
         await writeJson(stateFile, state);
       };
       const sendProgressUpdate = async (update) => {
-        if (!config.progressUpdates || !update?.text || progressState.finished) {
+        if (!shouldSendProgressUpdate(config, update) || progressState.finished) {
           return;
         }
         const now = Date.now();

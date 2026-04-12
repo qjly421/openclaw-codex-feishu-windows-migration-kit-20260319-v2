@@ -21,6 +21,7 @@
   "typingIndicator": true,
   "typingEmoji": "Typing",
   "progressUpdates": true,
+  "progressCommandUpdates": false,
   "progressInitialDelayMs": 8000,
   "progressUpdateIntervalMs": 15000,
   "progressMaxMessages": 6,

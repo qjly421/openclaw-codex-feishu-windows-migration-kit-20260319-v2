@@ -49,6 +49,7 @@ Update at least these fields:
 - `codexBin`
 - `groupSessionScope`
 - `typingIndicator`
+- `progressCommandUpdates`
 - `mediaRoot`
 
 Recommended defaults:
@@ -56,6 +57,7 @@ Recommended defaults:
 - `codexBin = "codex"`
 - `groupSessionScope = "group_sender"`
 - `typingIndicator = true`
+- `progressCommandUpdates = false`
 
 ### 4. Verify foreground first
 
@@ -67,6 +69,7 @@ node .\codex_feishu_gateway.mjs watch --config C:\Users\<user>\.codex-feishu-gat
 Then test in Feishu:
 
 - `/status`
+- `/stop` while a long task is running, to verify interruption works without clearing later queued messages
 - a plain text message
 - an image or file attachment
 - a reply that contains `[feishu-attachment] C:\absolute\path\to\file.pdf`

@@ -54,6 +54,7 @@ For most deployments, keep:
 - `dmPolicy = open`
 - `groupPolicy = open`
 - `typingIndicator = true`
+- `progressCommandUpdates = false`
 
 ## Validation flow
 

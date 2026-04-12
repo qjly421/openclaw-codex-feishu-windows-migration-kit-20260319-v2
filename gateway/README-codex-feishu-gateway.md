@@ -7,13 +7,9 @@ This migration kit connects a Feishu bot to local Codex sessions through Feishu 
 - `codex_feishu_gateway.mjs`: Feishu long-connection gateway
 - `feishu_gateway.example.json`: sanitized config template
 - `run_codex_feishu_gateway.sh`: foreground macOS/Linux runner
-- `bootstrap_codex_feishu_macos.sh`: macOS bootstrap for dependencies, config template, and public skills
 - `install_codex_feishu_launchagent.sh`: macOS `launchd` installer
-- `update_codex_feishu_macos.sh`: macOS update flow for repo pull, dependency refresh, and skill sync
-- `sync_public_skills.sh`: copy public skills into the local Codex skill directory
 - `run_codex_feishu_gateway.cmd`: foreground Windows runner
 - `install_codex_feishu_task.ps1`: Windows Task Scheduler installer
-- `README-codex-feishu-macos.md`: macOS deployment guide
 - `README-codex-feishu-windows.md`: Windows migration guide
 - `skill/codex-feishu-gateway/`: reusable skill version of this workflow
 
@@ -22,7 +18,7 @@ This migration kit connects a Feishu bot to local Codex sessions through Feishu 
 - Receive `im.message.receive_v1` over Feishu WebSocket long connection
 - Map each Feishu chat to a Codex session
 - Continue the same conversation with `codex exec resume`
-- Support `/status`, `/progress`, `/plan`, `/approve`, `/cancel`, `/run`, `/new`, `/reset`, `/help`
+- Support `/status`, `/progress`, `/plan`, `/approve`, `/cancel`, `/stop`, `/run`, `/new`, `/reset`, `/help`
 - Download inbound image/file attachments to local disk
 - Send local files or images back to Feishu with `[feishu-attachment] <absolute-path>`
 - Show a reaction-based processing indicator while Codex is working
@@ -53,11 +49,12 @@ npm install
 
 1. Copy `feishu_gateway.example.json` to a real config file.
 2. Fill in your real `appId`, `appSecret`, `workspace`, and `codexBin`.
-3. To enable plan cards with working buttons, set `planCardsEnabled = true`, `cardCallbackEnabled = true`, and configure `cardCallbackHost`, `cardCallbackPort`, `cardCallbackPath`, `verificationToken`, and `encryptKey` to match the Feishu callback settings.
-4. Leave `cardCallbackAutoChallenge = true` so the gateway can answer Feishu's callback URL verification challenge automatically.
-5. Set `cardCallbackPublicBaseUrl` if you already have a fixed public callback domain, or enable `cardCallbackTunnelEnabled = true` to let the gateway launch a local `cloudflared` quick tunnel and print the public callback URL in the logs.
-6. If you only want the card UI without button callbacks yet, leave `cardCallbackEnabled = false`; the gateway will send status cards and fall back to `/approve` and `/cancel`.
-7. Keep the real config outside the shareable package if you are distributing the kit.
+3. Keep `progressCommandUpdates = false` if Feishu should only receive todo/progress notes. Turn it on only if you explicitly want command start and command finished previews in chat.
+4. To enable plan cards with working buttons, set `planCardsEnabled = true`, `cardCallbackEnabled = true`, and configure `cardCallbackHost`, `cardCallbackPort`, `cardCallbackPath`, `verificationToken`, and `encryptKey` to match the Feishu callback settings.
+5. Leave `cardCallbackAutoChallenge = true` so the gateway can answer Feishu's callback URL verification challenge automatically.
+6. Set `cardCallbackPublicBaseUrl` if you already have a fixed public callback domain, or enable `cardCallbackTunnelEnabled = true` to let the gateway launch a local `cloudflared` quick tunnel and print the public callback URL in the logs.
+7. If you only want the card UI without button callbacks yet, leave `cardCallbackEnabled = false`; the gateway will send status cards and fall back to `/approve` and `/cancel`.
+8. Keep the real config outside the shareable package if you are distributing the kit.
 
 ## Foreground run
 
@@ -80,7 +77,7 @@ node .\codex_feishu_gateway.mjs auth-test --config C:\path\to\feishu_gateway.jso
 macOS:
 
 ```bash
-bash ./bootstrap_codex_feishu_macos.sh
+./install_codex_feishu_launchagent.sh
 ```
 
 Windows:
@@ -103,9 +100,11 @@ If Codex should send a local file or image back through Feishu, it must append o
 - Reply normally to answer open questions.
 - Send `/approve` to execute the latest approved plan.
 - Send `/cancel` to drop the pending plan while keeping the chat session.
+- Send `/stop` to interrupt only the currently running task in this chat. Later queued messages stay queued.
 - Send `/run <task>` to bypass planning and execute immediately.
 - When `planCardsEnabled` is on, the gateway also sends an interactive card that shows the current plan status.
 - When card callbacks are enabled, `Approve`, `Revise`, and `Cancel` buttons work from the card itself.
+- After approval starts, the plan card is patched into a green execution-state card without the old action buttons.
 
 ## Card callback setup
 
@@ -121,9 +120,9 @@ If Codex should send a local file or image back through Feishu, it must append o
 - Use `groupSessionScope = group_sender` if group members should not share one conversation.
 - `groupAssistantMode = hybrid` keeps group replies public-first while preserving private/direct-chat execution behavior.
 - `groupPublicMemoryLimit` and `groupHighlightLimit` control how much public group context is carried into prompts.
+- `progressCommandUpdates = false` is the safer default if command lines or command output may contain local paths, secrets, or noisy execution details.
 - `startupNotifyChatIds` can send a boot-ready message to one or more Feishu chats after the long connection becomes ready.
 - `startupNotifyDeduplicatePerBoot = true` prevents duplicate "ready" messages during reconnect loops in the same Windows boot.
 - Prefer foreground validation before enabling startup automation.
-- On macOS, prefer the bootstrap and update scripts so the `launchd` agent stays attached to the repo checkout and the synced public skills.
 - This kit is a standalone local gateway. It does not modify the Codex desktop app bundle.
 - The Feishu Node SDK documents that long connection currently supports event subscriptions only, not callback subscriptions, so interactive cards require the extra HTTP callback path described above.

@@ -14,8 +14,14 @@
   "groupSessionScope": "group_sender",
   "typingIndicator": true,
   "typingEmoji": "Typing",
+  "progressUpdates": true,
+  "progressCommandUpdates": false,
+  "progressInitialDelayMs": 8000,
+  "progressUpdateIntervalMs": 15000,
+  "progressMaxMessages": 6,
   "replyChunkLimit": 1800,
-  "codexTimeoutMs": 600000,
+  "codexTimeoutMs": 3600000,
+  "codexFirstEventTimeoutMs": 180000,
   "codexArgs": [],
   "mediaRoot": "C:\\Users\\YourName\\.codex-feishu-gateway\\feishu_media"
 }

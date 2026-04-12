@@ -56,8 +56,11 @@ Pay special attention to:
 - `codexBin`
 - `groupSessionScope`
 - `typingIndicator`
+- `progressCommandUpdates`
 - `mediaRoot`
 - `codexArgs`
+
+Keep `progressCommandUpdates = false` when the bot should only send progress/todo notes back to Feishu without echoing `Running command` or `Command finished` messages.
 
 ### 5. Verify in order
 
@@ -86,10 +89,16 @@ The gateway supports:
 
 - `im.message.receive_v1` via Feishu long connection
 - chat-to-Codex session mapping
-- `/status`, `/new`, `/reset`, `/help`
+- `/status`, `/stop`, `/new`, `/reset`, `/help`
 - inbound image/file download into `mediaRoot/inbound`
 - outbound file/image sending through `[feishu-attachment] <absolute-path>`
 - reaction-based processing indicator through `typingIndicator`
+
+For planning flows, keep the plan card lifecycle consistent:
+
+- an approval should patch the same card into a green execution-state card
+- the execution-state card should not keep the old action buttons
+- `/stop` should interrupt only the active run for that chat, not silently flush later queued requests
 
 ## Troubleshooting heuristics
 
