@@ -61,6 +61,92 @@ Recommended starting skills:
 - `skills/github-repo-sync`
 - `skills/long-task-orchestrator`
 
+## Updating An Existing Machine
+
+Use this section when a machine is already running the gateway and you want to update it in place without re-reading the whole repo.
+
+### 1. Pull the latest framework
+
+If the machine runs directly from this repository:
+
+```bash
+git pull --ff-only origin main
+```
+
+If the machine runs from a copied gateway directory instead of a git checkout, re-sync these directories from the latest repo snapshot:
+
+- `gateway/`
+- `skills/`
+
+### 2. Refresh dependencies only if needed
+
+If `gateway/package.json` or `gateway/package-lock.json` changed, run:
+
+```bash
+cd gateway
+npm install
+```
+
+If those files did not change, you usually do not need to reinstall Node dependencies.
+
+### 3. Review config changes without overwriting secrets
+
+Compare your real machine-local config against:
+
+- `gateway/feishu_gateway.example.json`
+- `gateway/README-codex-feishu-gateway.md`
+- `gateway/README-codex-feishu-windows.md`
+
+Do not replace your real config file blindly. Copy only the new keys or behavioral changes you want.
+
+Current high-signal update points:
+
+- `progressCommandUpdates = false`
+  - keeps Feishu progress updates enabled
+  - suppresses `Running command` and `Command finished` chat noise
+- `/stop`
+  - interrupts only the currently running task for that chat
+  - does not automatically flush later queued messages
+- planning card approval flow
+  - after approval starts, the existing plan card should patch into a green execution-state card
+  - the green execution-state card should no longer show the old action buttons
+
+### 4. Re-copy public skills if that machine uses local skill copies
+
+If another machine copied skills into a local Codex skill directory, refresh at least:
+
+- `skills/codex-feishu-gateway`
+
+Also refresh any other skills you actively use from this repo.
+
+### 5. Restart only during an idle window
+
+Code and config changes do not affect an already-running gateway process until it is restarted.
+
+If the machine uses:
+
+- Windows Task Scheduler
+  - restart the running gateway process or rerun the scheduled task during an idle window
+- macOS `launchd`
+  - restart the LaunchAgent during an idle window
+- foreground `watch`
+  - stop the old process and start `watch` again
+
+If the install path did not change, you usually do not need to reinstall the scheduled task or LaunchAgent.
+
+### 6. Verify after restart
+
+Minimum verification checklist:
+
+1. `/status`
+2. `/progress`
+3. send a task that enters planning mode
+4. approve the plan and confirm the existing card turns green
+5. confirm the green execution-state card no longer shows the old action buttons
+6. run a long task and test `/stop`
+7. confirm later queued messages still run in order
+8. confirm Feishu now shows progress updates without command echo if `progressCommandUpdates = false`
+
 ## Repository Positioning
 
 Use this repository for public-safe materials:
