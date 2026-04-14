@@ -3003,7 +3003,6 @@ async function patchInteractiveCardMessage(client, messageId, card) {
     async () => client.im.v1.message.patch({
       path: { message_id: messageId },
       data: {
-        msg_type: 'interactive',
         content: JSON.stringify(card),
       },
     }),
