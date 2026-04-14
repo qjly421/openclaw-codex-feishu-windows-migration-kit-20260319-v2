@@ -34,6 +34,7 @@
 2. 进入 `gateway/`。
 3. 运行 `npm install`。
 4. 复制 `gateway/feishu_gateway.example.json` 生成真实本机配置。
+   如果是 macOS，优先用 `gateway/feishu_gateway.example.macos.json`，或者直接运行 `bash ./gateway/bootstrap_codex_feishu_macos.sh`，让脚本按 Mac 路径自动生成配置。
 5. 先做认证验证：
 
 ```bash
@@ -93,10 +94,13 @@ npm install
 更新时重点对照：
 
 - `gateway/feishu_gateway.example.json`
+- `gateway/feishu_gateway.example.macos.json`（macOS）
 - `gateway/README-codex-feishu-gateway.md`
 - `gateway/README-codex-feishu-windows.md`
 
 不要把真实配置文件整份覆盖掉。只补新增字段和行为变化。
+
+如果一台旧 Mac 还在用 `~/.codex/feishu_gateway.json` 这套老布局，先执行一次 `bash ./gateway/bootstrap_codex_feishu_macos.sh --skip-launchagent`，把运行目录迁到 `~/.codex-feishu-gateway/`，再走常规更新流程。
 
 这次更新最需要注意的是：
 

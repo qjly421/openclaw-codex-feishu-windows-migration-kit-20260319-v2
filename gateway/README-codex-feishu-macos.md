@@ -42,7 +42,8 @@ What it does:
 
 - runs `npm install` in `gateway/`
 - copies public skills into `~/.codex/skills/`
-- creates `~/.codex-feishu-gateway/feishu_gateway.json` if it does not exist
+- creates `~/.codex-feishu-gateway/feishu_gateway.json` with Mac-friendly paths if it does not exist
+- if it finds a legacy `~/.codex/feishu_gateway.json`, it migrates that config into the new runtime root and copies the old state/media forward
 - installs or refreshes the macOS `launchd` agent
 
 If you want to install manually first without background startup:
@@ -72,6 +73,10 @@ Recommended defaults:
 - `codexBin = "codex"`
 - `groupSessionScope = "group_sender"`
 - `typingIndicator = true`
+
+If you want a static reference file for Mac, start from:
+
+- `gateway/feishu_gateway.example.macos.json`
 
 ### 4. Verify in foreground first
 
@@ -106,6 +111,7 @@ What it does:
 - uses the repo-local `node_modules`
 - writes logs to `~/.codex-feishu-gateway/log/`
 - restarts the agent after reinstall
+- can unload older LaunchAgent labels first if you export `FEISHU_GATEWAY_LEGACY_LABELS="old.label.one,old.label.two"`
 
 Runtime files:
 
@@ -129,6 +135,8 @@ What it does:
 - refreshes `gateway/node_modules`
 - resyncs public skills into `~/.codex/skills/`
 - reinstalls the `launchd` agent
+
+If your Mac was still on the old `~/.codex/feishu_gateway.json` layout, run the bootstrap once before the normal update flow so the config and runtime files move into `~/.codex-feishu-gateway/`.
 
 Useful variants:
 

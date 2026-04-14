@@ -72,11 +72,11 @@ echo "Refreshing gateway dependencies"
 )
 
 if [[ $SKIP_SKILL_SYNC -eq 0 ]]; then
-  "$GATEWAY_ROOT/sync_public_skills.sh"
+  bash "$GATEWAY_ROOT/sync_public_skills.sh"
 fi
 
 if [[ $SKIP_LAUNCHAGENT -eq 0 ]]; then
-  FEISHU_GATEWAY_CONFIG="$CONFIG_PATH" "$GATEWAY_ROOT/install_codex_feishu_launchagent.sh"
+  FEISHU_GATEWAY_CONFIG="$CONFIG_PATH" bash "$GATEWAY_ROOT/install_codex_feishu_launchagent.sh"
 fi
 
 cat <<EOF

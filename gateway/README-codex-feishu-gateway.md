@@ -6,6 +6,7 @@ This migration kit connects a Feishu bot to local Codex sessions through Feishu 
 
 - `codex_feishu_gateway.mjs`: Feishu long-connection gateway
 - `feishu_gateway.example.json`: sanitized config template
+- `feishu_gateway.example.macos.json`: macOS-oriented config template
 - `run_codex_feishu_gateway.sh`: foreground macOS/Linux runner
 - `install_codex_feishu_launchagent.sh`: macOS `launchd` installer
 - `run_codex_feishu_gateway.cmd`: foreground Windows runner
@@ -48,6 +49,7 @@ npm install
 ## Configuration
 
 1. Copy `feishu_gateway.example.json` to a real config file.
+   On macOS, `feishu_gateway.example.macos.json` is the better starting point.
 2. Fill in your real `appId`, `appSecret`, `workspace`, and `codexBin`.
 3. Keep `progressCommandUpdates = false` if Feishu should only receive todo/progress notes. Turn it on only if you explicitly want command start and command finished previews in chat.
 4. To enable plan cards with working buttons, set `planCardsEnabled = true`, `cardCallbackEnabled = true`, and configure `cardCallbackHost`, `cardCallbackPort`, `cardCallbackPath`, `verificationToken`, and `encryptKey` to match the Feishu callback settings.

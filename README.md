@@ -35,6 +35,7 @@ It has evolved from a one-off Windows migration kit into a maintainable public f
 2. Enter `gateway/`.
 3. Run `npm install`.
 4. Copy `feishu_gateway.example.json` into a real local config file.
+   On macOS, prefer `gateway/feishu_gateway.example.macos.json` or run `bash ./gateway/bootstrap_codex_feishu_macos.sh` so the config is created with Mac-friendly paths.
 5. Verify auth with:
 
 ```bash
@@ -94,10 +95,13 @@ If those files did not change, you usually do not need to reinstall Node depende
 Compare your real machine-local config against:
 
 - `gateway/feishu_gateway.example.json`
+- `gateway/feishu_gateway.example.macos.json` on macOS
 - `gateway/README-codex-feishu-gateway.md`
 - `gateway/README-codex-feishu-windows.md`
 
 Do not replace your real config file blindly. Copy only the new keys or behavioral changes you want.
+
+If an older Mac still uses `~/.codex/feishu_gateway.json`, run `bash ./gateway/bootstrap_codex_feishu_macos.sh --skip-launchagent` once first so the runtime is migrated into `~/.codex-feishu-gateway/`.
 
 Current high-signal update points:
 
