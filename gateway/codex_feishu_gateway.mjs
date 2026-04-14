@@ -1599,6 +1599,21 @@ function clearActiveRunController(key, sourceMessageId = '') {
   activeRunControllers.delete(normalizedKey);
 }
 
+function hasLiveActiveRunController(key, sourceMessageId = '') {
+  const normalizedKey = String(key || '');
+  if (!normalizedKey) {
+    return false;
+  }
+  const existing = activeRunControllers.get(normalizedKey);
+  if (!existing?.abortController || existing.abortController.signal?.aborted) {
+    return false;
+  }
+  if (sourceMessageId && existing.sourceMessageId && existing.sourceMessageId !== sourceMessageId) {
+    return false;
+  }
+  return true;
+}
+
 function requestActiveRunStop(key, reason = 'Stopped by user via /stop.') {
   const normalizedKey = String(key || '');
   if (!normalizedKey) {
@@ -3450,6 +3465,11 @@ async function repairStaleActiveRuns(state, stateFile, source = 'runtime_watchdo
       continue;
     }
 
+    // Let the owning in-process controller decide whether a live run is stale.
+    if (hasLiveActiveRunController(key, activeRun.sourceMessageId || '')) {
+      continue;
+    }
+
     const startedAtMs = parseIsoTimeMs(activeRun.startedAt);
     const lastUpdateAtMs = parseIsoTimeMs(activeRun.lastUpdateAt);
     const activityAtMs = Math.max(startedAtMs, lastUpdateAtMs);
@@ -4376,7 +4396,9 @@ async function executePlanCardAction({
       } else {
         console.warn(`feishu long connection card action missing patch target: message_id=${targetMessageId || '-'} summary=${summarizeCardActionPayload(normalizedActionEvent)}`);
       }
-      return null;
+      // Persistent-connection card callbacks should also return the updated card
+      // so Feishu applies the new state immediately on the callback response path.
+      return resultCard;
     }
     return resultCard;
   } catch (error) {
